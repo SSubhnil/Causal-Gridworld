@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from __future__ import print_function
 import numpy as np
 import gym
@@ -46,7 +45,6 @@ class WindyGridWorldEnv(gym.Env):
         Parameters
         ----------
         action : 0 = Up, 1 = Right, 2 = Down, 3 = Left
-
         Returns
         -------
         ob, reward, episode_over, info : tuple
@@ -62,7 +60,7 @@ class WindyGridWorldEnv(gym.Env):
         assert self.action_space.contains(action)
         self.observation = self.action_destination[self.observation][action]
         if self.observation == self.goal_state:
-            return self.observation, -1, True, {}
+            return self.observation, 10, True, {}
         return self.observation, -1, False, {}
         
     def reset(self):
@@ -103,7 +101,3 @@ class WindyGridWorldEnv(gym.Env):
 
     def seed(self, seed=None):
         pass
-
-         
-
-        

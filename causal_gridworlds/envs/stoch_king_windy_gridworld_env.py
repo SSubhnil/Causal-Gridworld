@@ -24,6 +24,7 @@ class StochKingWindyGridWorldEnv(gym.Env):
         self.grid_height = GRID_HEIGHT
         self.grid_width = GRID_WIDTH
         self.wind = np.array(WIND)
+        self.realized_wind = np.array(WIND)
         self.start_state = START_STATE
         self.goal_state = GOAL_STATE
         self.reward = REWARD
@@ -43,6 +44,7 @@ class StochKingWindyGridWorldEnv(gym.Env):
                          'UL':7 } #up-left
         self.num_wind_tiles = np.count_nonzero(self.wind)
         self.noise_case = NOISE_CASE
+        self.nA = len(self.actions)
                 
     def action_destination(self, state, action):
         '''set up destinations for each action in each state'''
@@ -57,7 +59,8 @@ class StochKingWindyGridWorldEnv(gym.Env):
         noise2 = self.np_random.choice(rang, self.num_wind_tiles, self.probablities)
         noise = noise1 if self.noise_case==1 else noise2
         wind = np.copy(self.wind)
-        wind[np.where( wind > 0 )] += noise 
+        wind[np.where( wind > 0 )] += noise
+        self.realized_wind = wind
         ##############
         destination = dict()
         destination[self.actions['U']] = (max(i - 1 - wind[j], 0), j)
@@ -103,7 +106,7 @@ class StochKingWindyGridWorldEnv(gym.Env):
         assert self.action_space.contains(action)
         w, self.observation = self.action_destination(self.observation, action)
         if self.observation == self.goal_state:
-            return self.observation, -1.0, True, {'w':w}
+            return self.observation, 10, True, {'w':w}
         return self.observation, -1.0, False, {'w':w}
         
     def reset(self):

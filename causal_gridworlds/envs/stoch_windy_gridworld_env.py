@@ -5,6 +5,7 @@ import gym
 from gym import spaces
 from gym.utils import seeding
 import sys
+from io import StringIO
 
 
 class StochWindyGridWorldEnv(gym.Env):
@@ -19,7 +20,7 @@ class StochWindyGridWorldEnv(gym.Env):
                  START_CELL = (3, 0), GOAL_CELL = (3, 7),\
                  REWARD = -1, RANGE_RANDOM_WIND=2,\
                  PROB=[0.35, 0.1, 0.1, 0.1, 0.35],\
-                 NOISE_CASE = 1,
+                 NOISE_CASE = 2,
                  SIMULATOR_SEED = 3323,
                  GAMMA = 0.9):
         self.prng_simulator = np.random.RandomState(SIMULATOR_SEED) #Pseudorandom number generator
@@ -253,10 +254,10 @@ class StochWindyGridWorldEnv(gym.Env):
         destination = self.f[state, action, noise + self.range_random_wind]
         #if destination ==  self.goal_state:
         if state ==self.goal_state and destination ==  self.goal_state:
-            reward = 0 ########################################### 0 before
+            reward = 10 ########################################### 0 before
             isdone = True
         elif state !=self.goal_state and destination ==  self.goal_state:
-            reward = 0
+            reward = 10
             isdone = True
         else:
             reward = -1
