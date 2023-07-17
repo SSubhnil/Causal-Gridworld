@@ -93,12 +93,12 @@ class GreedyEvaluation:
         return step_count, np.mean(step_count)
         
 class DQN_GreedyEvaluation:
-    def __init__(self, ENV, GRID_DIMENSIONS, encoder, device):
+    def __init__(self, ENV, GRID_DIMENSIONS, device):
         self.env = ENV
         self.grid_dimensions = GRID_DIMENSIONS
         self.num_episodes = 100
         # self.Q_store = np.empty((self.num_episodes, self.env.grid_height, self.env.grid_width, self.env.nA))
-        self.enco = encoder
+        # self.enco = encoder
         self.device = device
         
     def choose_action(self, model, state, eps = 0.01):
@@ -129,7 +129,7 @@ class DQN_GreedyEvaluation:
             score = 0
     
             # Observe S_0: the initial state
-            state = torch.tensor(self.enco.OneHotEncoder(self.env.reset()), dtype=torch.float32).to(self.device)
+            state = torch.tensor(self.env.reset(), dtype=torch.float32).to(self.device)
             done = False
     
             count = 0
@@ -147,7 +147,7 @@ class DQN_GreedyEvaluation:
                 next_action = self.choose_action(Q, state, nA)
 
                 # Update state and action
-                state = torch.tensor(self.enco.OneHotEncoder(next_state), dtype=torch.float32).to(self.device)  # S_t <- S_{t+1}
+                state = torch.tensor(next_state, dtype=torch.float32).to(self.device)  # S_t <- S_{t+1}
     
             step_count[i_episode - 1][0] = count
     

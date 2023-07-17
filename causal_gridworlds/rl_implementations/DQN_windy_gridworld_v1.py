@@ -28,15 +28,20 @@ from util.util import RepresentationTools as rpt
 from util.static_wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
 from envs.windy_gridworld_env import WindyGridWorldEnv
 
+import wandb
+wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
+wandb.init(
+    project="4A-Windy-GW-Vanilla")
+
 env = WindyGridWorldEnv()
-enco = rpt(env.observation_space) # Import OneHotEncoder for state representation
+
 np.random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # device = torch.device("cpu")
 print("Using device:", device)
 
-num_gpus = torch.cuda.device_count()
-print(f"Number of available GPUs: {num_gpus}")
+# num_gpus = torch.cuda.device_count()
+# print(f"Number of available GPUs: {num_gpus}")
 
 is_ipython = 'inline' in matplotlib.get_backend()
 if is_ipython:
@@ -48,23 +53,31 @@ grid_dimensions = (env.grid_height, env.grid_width)
 class DQN(nn.Module):
     def __init__(self, state_size, action_size, hidden_size):
         super(DQN, self).__init__()
-        state_size = state_size[1]
-        action_size = action_size
-        hidden_dim = hidden_size
+        self.state_size = state_size
+        self.action_size = action_size
+        self.hidden_dim = hidden_size
         self.fci = nn.Linear(state_size, hidden_dim)
         self.fc1 = nn.Linear(hidden_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, hidden_dim)
+        # self.fc3 = nn.Linear(hidden_dim, hidden_dim)
         # self.fc4 = nn.Linear(hidden_dim, hidden_dim)
         self.fcf = nn.Linear(hidden_dim, action_size)
 
     def forward(self, x):
-        x = torch.relu(self.fci(x))
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = torch.tanh(self.fc3(x))
-        # x = torch.relu(self.fc4(x))
-        x = self.fcf(x)
+        if len(x.size()) == 2:
+            x = torch.relu(self.fci(x))
+            x = torch.relu(self.fc1(x))
+            x = torch.tanh(self.fc2(x))
+            # x = torch.tanh(self.fc3(x))
+            # x = torch.relu(self.fc4(x))
+            x = self.fcf(x)
+        else:
+            x = torch.relu(self.fci(x.view(-1, self.state_size)))
+            torch.relu(self.fc1(x))
+            x = torch.tanh(self.fc2(x))
+            # x = torch.tanh(self.fc3(x))
+            # x = torch.relu(self.fc4(x))
+            x = self.fcf(x)        
         return x
 
 class ReplayMemory:
@@ -117,12 +130,12 @@ class DQNAgent:
         self.epsilon_decay = epsilon_decay
         self.greedy_interval = greedy_interval
         self.epsilon_min = 0.01
-        self.final_lr = 0.0001
+        self.final_lr = 1e-6
         self.replay_memory = ReplayMemory(512)
         self.model = DQN(state_size, action_size, hidden_dim).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.loss = nn.MSELoss()
-        self.Q_table = np.empty((env.grid_height, env.grid_width, env.nA))
+        self.Q_table = torch.empty((env.grid_height, env.grid_width, env.nA))
 
     def choose_action(self, state):
         if np.random.rand() <= self.epsilon:
@@ -143,7 +156,7 @@ class DQNAgent:
         if len(self.replay_memory) < batch_size:
             return
         
-        random.shuffle(self.replay_memory.memory)
+        # random.shuffle(self.replay_memory.memory)
         states, actions, rewards, next_states, dones = self.replay_memory.sample(batch_size)
         
 
@@ -158,10 +171,10 @@ class DQNAgent:
 
     def train(self, env, episodes, batch_size):
         # Initialize the greedy evaluation
-        state = enco.OneHotEncoder(env.reset())
-        # state = env.reset()
+        # state = enco.OneHotEncoder(env.reset())
+        state = env.reset()
         
-        greedy_evaluation = evaluate(env, grid_dimensions, enco, device)
+        greedy_evaluation = evaluate(env, grid_dimensions, device)
         greedy_step_count = np.empty((int(episodes/self.greedy_interval), greedy_evaluation.num_episodes, 1))
         avg_greedy_step_count = np.empty(int(episodes/self.greedy_interval))
         step_count = np.empty((episodes, 1))
@@ -178,7 +191,7 @@ class DQNAgent:
             
             percent_completion = (episode+1)/episodes
             
-            state = enco.OneHotEncoder(env.reset())
+            state = env.reset()
             # state = env.reset()
             done = False
             
@@ -196,7 +209,7 @@ class DQNAgent:
                 action = self.choose_action(state)
                 
                 next_state, reward, done, _ = env.step(action)
-                next_state = enco.OneHotEncoder(next_state)
+                # next_state = enco.OneHotEncoder(next_state)
                 
                 self.remember(state, action, reward, next_state, done)
                 episode_reward += reward
@@ -204,6 +217,8 @@ class DQNAgent:
                 state = next_state
                 self.replay(batch_size, percent_completion)
             
+            wandb.log({'Reward':episode_reward,'Steps/episode':step_counter,'Epsilon':self.epsilon,\
+                      'Learning rate':self.learning_rate})
             step_count[episode, 0] = step_counter
             print("Episode: {}/{}, Reward: {}, Epsilon: {:.2f}, Learning Rate: {}".format(episode+1, episodes, episode_reward, self.epsilon, self.learning_rate))
         
@@ -215,16 +230,17 @@ def moving_average(step_count, n = 300):
     running_average[n:] = running_average[n:] - running_average[:-n]
     return running_average[n - 1:] / n
 
-state_size = (env.observation_space[0].n, env.observation_space[1].n)
+state_size = 2
+print(state_size)
 action_size = env.nA
 batch_size = 256
-num_episodes = 10000
-alpha = 0.01
-discount_rate = 1.0
+num_episodes = 5000
+alpha = 1e-3
+discount_rate = 0.98
 greedy_interval = 1000
-epsilon_start = 1.0
+epsilon_start = 0.9
 epsilon_decay = epsilon_start/num_episodes
-hidden_dim = 256
+hidden_dim = 32
 agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate,\
                  epsilon_start, epsilon_decay, greedy_interval)
 
@@ -232,10 +248,10 @@ Q_table, step_count, greedy_step_count, avg_greedy_step_count = agent.train(env,
 
 running_average = moving_average(step_count)
 
-experiment_number = 6
+experiment_number = 101
 
-np.save("DQN-Windy-GW-Step_count-greedy_eval_h256p_{}.npy".format(experiment_number), step_count)
-np.save("DQN-Windy-GW-Greedy_Step_count-greedy_eval_h256_{}.npy".format(experiment_number), avg_greedy_step_count)
+np.save("DQN-Vanilla-GW-Step_count-greedy_eval_h256p_{}.npy".format(experiment_number), step_count)
+np.save("DQN-Vanilla-GW-Greedy_Step_count-greedy_eval_h256_{}.npy".format(experiment_number), avg_greedy_step_count)
     
 #avg_step_count = np.average(mega_step_count, axis=0)
 spacer1 = np.arange(1, len(running_average)+1)
@@ -266,9 +282,9 @@ ax2.tick_params(axis='y', labelcolor=color)
 # plt.xlabel('Episodes')
 # plt.ylabel('Running Average (steps/episode)')
 # plt.legend('Min_step', min(step_count))
-plt.title('DQN-Wind-GW alp=%f' % alpha)
+plt.title('DQN-Vanilla-GW alp=%f' % alpha)
 plt.legend(loc="upper right")
-plt.savefig('DQN-Wind-GW-test_h256_{}.png'.format(experiment_number), dpi=600)
+plt.savefig('DQN-Vanilla-GW-test_h256_{}.png'.format(experiment_number), dpi=600)
 
 #%%
 plt.figure()
@@ -280,29 +296,5 @@ for k in range(0, np.shape(greedy_step_count)[0]):
     spacer3 = np.arange(0, len(running_avg_greedy_step_count))
     plt.plot(spacer3, running_avg_greedy_step_count, label = "Batch={}".format(k))
 plt.legend()
-plt.savefig("DQN-Windy-GW-greedy_episodes_h256_{}.png".format(experiment_number), dpi = 600)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+plt.savefig("DQN-Vanilla-GW-greedy_episodes_h256_{}.png".format(experiment_number), dpi = 600)
 
