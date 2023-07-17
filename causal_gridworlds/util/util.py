@@ -112,3 +112,20 @@ class PlotUtil:
                 plt.text(y, x, text, ha='center', va='center', color='white', fontsize=7)
                 plt.arrow(y, x, dx, dy, head_width=0.15, head_length=0.15, fc='black', ec='black')
         plt.show()
+
+class RepresentationTools:
+    def __init__(self, gridworld_size):
+        self.gridworld_height = gridworld_size[0].n 
+        self.gridworld_width = gridworld_size[1].n
+        self.gridworld_size = self.gridworld_height * self.gridworld_width
+        
+    def OneHotEncoder(self, current_location):
+        base_of_zeros = np.zeros((self.gridworld_height, self.gridworld_width))
+        base_of_zeros[current_location[0], current_location[1]] = 1
+        return base_of_zeros#.flatten()
+    
+    def OneHotDecoder(self, state):
+        position_of_one = np.where(np.isclose(state.cpu(), 1.0))[0].item()
+        row_pos = np.floor(position_of_one/self.gridworld_width).astype(int)
+        column_pos = position_of_one % self.gridworld_width
+        return row_pos, column_pos

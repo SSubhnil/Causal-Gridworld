@@ -41,6 +41,7 @@ class StochWindyGridWorldEnv_V2(gym.Env):
         self.num_wind_tiles = np.count_nonzero(self.wind)
         self.noise_case = NOISE_CASE
         self.nA = len(self.actions)
+        self.step_counter = 0
                 
     def action_destination(self, state, action):
         '''set up destinations for each action in each state'''
@@ -90,14 +91,18 @@ class StochWindyGridWorldEnv_V2(gym.Env):
                  step. However, official evaluations of your agent are not 
                  allowed to use this for learning.
         """
+        self.step_counter += 1
         assert self.action_space.contains(action)
         w, self.observation = self.action_destination(self.observation, action)
+        if self.step_counter == 300:
+            return self.observation, -1, True, {'w':w}
         if self.observation == self.goal_state:
             return self.observation, 10, True, {'w':w}
-        return self.observation, -1.0, False, {'w':w}
+        return self.observation, -1, False, {'w':w}
         
     def reset(self):
         ''' resets the agent position back to the starting position'''
+        self.step_counter = 0
         self.observation = self.start_state
         return self.observation   
 

@@ -6,7 +6,7 @@ from gym import spaces
 import sys
 
 class KingWindyGridWorldEnv(gym.Env):
-    '''Creates the King Windy GridWorld Environment'''
+    '''Creates the King Windy GridWorld Environment''' # [0, 0, 0, 1, 1, 1, 2, 2, 1, 0]  # [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     def __init__(self, GRID_HEIGHT=7, GRID_WIDTH=10,\
                  WIND = [0, 0, 0, 1, 1, 1, 2, 2, 1, 0], \
                  START_STATE = (3, 0), GOAL_STATE = (3, 7),\
@@ -31,6 +31,7 @@ class KingWindyGridWorldEnv(gym.Env):
                          'DL':6,  #down-left
                          'UL':7 } #up-left
         self.nA = len(self.actions)
+        self.step_counter = 0
         
         # set up destinations for each action in each state
         self.action_destination = np.empty((self.grid_height,self.grid_width), dtype=dict)
@@ -74,14 +75,18 @@ class KingWindyGridWorldEnv(gym.Env):
             info (dict) :
                  Contains no additional information.
         """
+        self.step_counter += 1
         assert self.action_space.contains(action)
         self.observation = self.action_destination[self.observation][action]
+        if self.step_counter == 300:
+            return self.observation, -10, True, {}
         if self.observation == self.goal_state:
             return self.observation, 10, True, {}
         return self.observation, -1, False, {}
         
     def reset(self):
         ''' resets the agent position back to the starting position'''
+        self.step_counter = 0
         self.observation = self.start_state
         return self.observation   
 

@@ -5,9 +5,9 @@ from gym import spaces
 import sys
 
 class WindyGridWorldEnv(gym.Env):
-    '''Creates the Windy GridWorld Environment'''
+    '''Creates the Windy GridWorld Environment''' # [0, 0, 0, 1, 1, 1, 2, 2, 1, 0]  # [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     def __init__(self, GRID_HEIGHT=7, GRID_WIDTH=10,\
-                 WIND = [0, 0, 0, 1, 1, 1, 2, 2, 1, 0], \
+                 WIND = [0, 0, 0, 1, 1, 1, 2, 2, 1, 0],\
                  START_STATE = (3, 0), GOAL_STATE = (3, 7),\
                  REWARD = -1):
         self.grid_height = GRID_HEIGHT
@@ -24,6 +24,7 @@ class WindyGridWorldEnv(gym.Env):
                          'R':1,   #right
                          'D':2,   #down
                          'L':3 }  #left
+        self.step_counter = 0
         
         # set up destinations for each action in each state
         self.action_destination = np.empty((self.grid_height,self.grid_width), dtype=dict)
@@ -57,14 +58,18 @@ class WindyGridWorldEnv(gym.Env):
             info (dict) :
                  Contains no additional information.
         """
+        self.step_counter += 1            
         assert self.action_space.contains(action)
         self.observation = self.action_destination[self.observation][action]
+        if self.step_counter == 300:
+            return self.observation, -10, True, {}
         if self.observation == self.goal_state:
             return self.observation, 10, True, {}
         return self.observation, -1, False, {}
         
     def reset(self):
         ''' resets the agent position back to the starting position'''
+        self.step_counter = 0
         self.observation = self.start_state
         return self.observation   
 
