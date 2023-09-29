@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jun 15 15:54:04 2023
+Created on Mon Jun 19 15:03:51 2023
 
 @author: SSubhnil
-@details: DQN for Stochastic Windy Gridworld_v1
+@details: DQN for King Actions Windy GridWorld
 """
 import math
 import random
@@ -18,6 +18,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 
 import os
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -25,17 +26,12 @@ os.chdir('..')
 
 from util.util import PlotUtil
 from util.util import RepresentationTools as rpt
-from util.wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
-from envs.stoch_windy_gridworld_env_v2 import StochWindyGridWorldEnv_V2
+from util.static_wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
+from envs.king_windy_gridworld_env import KingWindyGridWorldEnv
 
-# import wandb
-# wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-# wandb.init(
-#     project="4A-Stoch-Windy-GW")
-
-
-env = StochWindyGridWorldEnv_V2()
-
+env = KingWindyGridWorldEnv()
+enco = rpt(env.observation_space) # Import OneHotEncoder for state representation
+np.random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # device = torch.device("cpu")
 print("Using device:", device)
@@ -53,10 +49,12 @@ grid_dimensions = (env.grid_height, env.grid_width)
 class DQN(nn.Module):
     def __init__(self, state_size, action_size, hidden_size):
         super(DQN, self).__init__()
-        self.state_size = state_size
-        self.action_size = action_size
-        self.hidden_dim = hidden_size
-        self.fci = nn.Linear(state_size, hidden_dim)
+        state_size = state_size
+        action_size = action_size
+        hidden_dim = hidden_size
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=3, stride=1)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1)
+        self.fci = nn.Linear(32 * 3 * 6, hidden_dim)
         self.fc1 = nn.Linear(hidden_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         # self.fc3 = nn.Linear(hidden_dim, hidden_dim)
@@ -64,20 +62,17 @@ class DQN(nn.Module):
         self.fcf = nn.Linear(hidden_dim, action_size)
 
     def forward(self, x):
-        if len(x.size()) == 2:
-            x = torch.relu(self.fci(x))
-            x = torch.relu(self.fc1(x))
-            x = torch.tanh(self.fc2(x))
-            # x = torch.tanh(self.fc3(x))
-            # x = torch.relu(self.fc4(x))
-            x = self.fcf(x)
-        else:
-            x = torch.relu(self.fci(x.view(-1, self.state_size)))
-            x = torch.relu(self.fc1(x))
-            x = torch.tanh(self.fc2(x))
-            # x = torch.tanh(self.fc3(x))
-            # x = torch.relu(self.fc4(x))
-            x = self.fcf(x)        
+        batch_size = x.size(0)
+        x = x.view(batch_size, 1, 7, 10)  # Reshape input
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = x.view(batch_size, 32 * 3 * 6)  # Flatten
+        x = F.relu(self.fci(x))
+        x = torch.relu(self.fc1(x))
+        x = torch.tanh(self.fc2(x))
+        # x = torch.tanh(self.fc3(x))
+        # x = torch.relu(self.fc4(x))
+        x = self.fcf(x)
         return x
 
 class ReplayMemory:
@@ -141,15 +136,15 @@ class DQNAgent:
         if np.random.rand() <= self.epsilon:
             return random.randrange(self.action_size)
         else:
-            state = torch.tensor(state, dtype=torch.float32).to(device)
+            state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
             q_values = self.model(state)
             # print(q_values)
             # self.Q_table[enco.OneHotDecoder(state)] = q_values # q_value requires grad(). That's why use detach()
             return torch.argmax(q_values).item()
 
     def remember(self, state, action, reward, next_state, done):
-        state = torch.tensor(np.array(state), dtype=torch.float32).to(device)
-        next_state = torch.tensor(np.array(next_state), dtype=torch.float32).to(device)
+        state = torch.tensor(np.array(state).reshape(1, -1), dtype=torch.float32).to(device)
+        next_state = torch.tensor(np.array(next_state).reshape(1, -1), dtype=torch.float32).to(device)
         self.replay_memory.push(state, action, reward, next_state, done)
 
     def replay(self, batch_size, percent_completion):
@@ -171,52 +166,49 @@ class DQNAgent:
 
     def train(self, env, episodes, batch_size):
         # Initialize the greedy evaluation
-        state = env.reset()
+        state = enco.OneHotEncoder(env.reset())
         
-        greedy_evaluation = evaluate(env, grid_dimensions, device)
+        greedy_evaluation = evaluate(env, grid_dimensions, enco, device)
         greedy_step_count = np.empty((int(episodes/self.greedy_interval), greedy_evaluation.num_episodes, 1))
         avg_greedy_step_count = np.empty(int(episodes/self.greedy_interval))
         step_count = np.empty((episodes, 1))
         
         sampling_counter = 0
         lr_decay = (self.learning_rate - self.final_lr) / episodes
-        eps_decay = (self.epsilon - self.epsilon_min)/episodes
         for episode in range(episodes):
             
             # Greedy evaluation
             if episode+1 % greedy_interval == 0:
-                greedy_step_count[sampling_counter], avg_greedy_step_count[sampling_counter], _\
+                greedy_step_count[sampling_counter], avg_greedy_step_count[sampling_counter]\
                     = greedy_evaluation.run_algo(self.learning_rate, self.model)
                 sampling_counter += 1
             
             percent_completion = (episode+1)/episodes
             
-            state = env.reset()
+            state = enco.OneHotEncoder(env.reset())
             done = False
             
             # Epsilon annealing - exponential decay
             if self.epsilon > self.epsilon_min:
-                # self.epsilon -= eps_decay
+                # self.epsilon -= self.epsilon_decay
                 self.epsilon = math.exp(-2*math.pow(percent_completion,3.5)/0.4)
             
             # Learning rate annealing - linear decay
-            # if self.learning_rate >= self.final_lr:
-            #     self.learning_rate -= lr_decay
+            if self.learning_rate >= self.final_lr:
+                self.learning_rate -= lr_decay
             episode_reward = 0
             step_counter = 0
             while not done:
                 action = self.choose_action(state)
                 
                 next_state, reward, done, _ = env.step(action)
+                next_state = enco.OneHotEncoder(next_state)
                 
                 self.remember(state, action, reward, next_state, done)
                 episode_reward += reward
                 step_counter += 1
                 state = next_state
                 self.replay(batch_size, percent_completion)
-            
-            # wandb.log({'Reward':episode_reward,'Steps/episode':step_counter,'Epsilon':self.epsilon,\
-            #           'Learning rate':self.learning_rate})
             
             step_count[episode, 0] = step_counter
             print("Episode: {}/{}, Reward: {}, Epsilon: {:.2f}, Learning Rate: {}".format(episode+1, episodes, episode_reward, self.epsilon, self.learning_rate))
@@ -229,16 +221,16 @@ def moving_average(step_count, n = 300):
     running_average[n:] = running_average[n:] - running_average[:-n]
     return running_average[n - 1:] / n
 
-state_size = 2
+state_size = env.observation_space[0].n * env.observation_space[1].n
 action_size = env.nA
 batch_size = 512
-num_episodes = 15000
-alpha = 5e-4
+num_episodes = 20000
+alpha = 1e-3
 discount_rate = 0.98
-greedy_interval = 1000
+greedy_interval = 3000
 epsilon_start = 1.0
 epsilon_decay = epsilon_start/num_episodes
-hidden_dim = 32
+hidden_dim = 64
 agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate,\
                  epsilon_start, epsilon_decay, greedy_interval)
 
@@ -246,10 +238,10 @@ Q_table, step_count, greedy_step_count, avg_greedy_step_count = agent.train(env,
 
 running_average = moving_average(step_count)
 
-experiment_number = 108
+experiment_number = 3
 
-np.save("DQN-Stoch-Windy-GW-Step_count-greedy_eval_b1024_{}.npy".format(experiment_number), step_count)
-np.save("DQN-Stoch-Windy-GW-Greedy_Step_count-greedy_eval_b1024_{}.npy".format(experiment_number), avg_greedy_step_count)
+np.save("DQN-King-Windy-GW-Step_count-greedy_eval_h256_{}.npy".format(experiment_number), step_count)
+np.save("DQN-King-Windy-GW-Greedy_Step_count-greedy_eval_h256_{}.npy".format(experiment_number), avg_greedy_step_count)
     
 #avg_step_count = np.average(mega_step_count, axis=0)
 spacer1 = np.arange(1, len(running_average)+1)
@@ -270,19 +262,19 @@ ax1.tick_params(axis='y', labelcolor=color)
 
 ax2 = ax1.twinx()
 
-color = 'tab:blue'
-ax2.set_ylabel('Greedy Evaluations (steps/batch)', color=color)
-ax2.plot(spacer2, avg_greedy_step_count, color=color, label="Greedy Eval.")
-for x,y in zip(spacer2, avg_greedy_step_count):
-    ax2.annotate('%s' % y, xy=(x,y), textcoords = 'data')
-ax2.tick_params(axis='y', labelcolor=color)
+# color = 'tab:blue'
+# ax2.set_ylabel('Greedy Evaluations (steps/batch)', color=color)
+# ax2.plot(spacer2, avg_greedy_step_count, color=color, label="Greedy Eval.")
+# for x,y in zip(spacer2, avg_greedy_step_count):
+#     ax2.annotate('%s' % y, xy=(x,y), textcoords = 'data')
+# ax2.tick_params(axis='y', labelcolor=color)
 
 # plt.xlabel('Episodes')
 # plt.ylabel('Running Average (steps/episode)')
 # plt.legend('Min_step', min(step_count))
-plt.title('DQN-Stoch-Wind-GW alp=%f' % alpha)
+plt.title('DQN-King-Windy-GW alp=%f' % alpha)
 plt.legend(loc="upper right")
-plt.savefig('DQN-Stoch-Wind-GW-test_b1024_{}.png'.format(experiment_number), dpi=600)
+plt.savefig('DQN-King-Windy-GW-test_h256_{}.png'.format(experiment_number), dpi=600)
 
 #%%
 plt.figure()
@@ -294,5 +286,4 @@ for k in range(0, np.shape(greedy_step_count)[0]):
     spacer3 = np.arange(0, len(running_avg_greedy_step_count))
     plt.plot(spacer3, running_avg_greedy_step_count, label = "Batch={}".format(k))
 plt.legend()
-plt.savefig("DQN-Stoch-Windy-GW-greedy_episodes{}.png".format(experiment_number), dpi = 600)
-
+plt.savefig("DQN-King-Windy-GW-greedy_episodes_h256_{}.png".format(experiment_number), dpi = 600)

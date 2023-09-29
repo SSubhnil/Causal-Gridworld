@@ -8,7 +8,7 @@ import sys
 class KingWindyGridWorldEnv(gym.Env):
     '''Creates the King Windy GridWorld Environment''' # [0, 0, 0, 1, 1, 1, 2, 2, 1, 0]  # [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     def __init__(self, GRID_HEIGHT=7, GRID_WIDTH=10,\
-                 WIND = [0, 0, 0, 1, 1, 1, 2, 2, 1, 0], \
+                 WIND = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], \
                  START_STATE = (3, 0), GOAL_STATE = (3, 7),\
                  REWARD = -1):
         self.grid_height = GRID_HEIGHT

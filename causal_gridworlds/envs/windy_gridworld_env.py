@@ -62,10 +62,10 @@ class WindyGridWorldEnv(gym.Env):
         assert self.action_space.contains(action)
         self.observation = self.action_destination[self.observation][action]
         if self.step_counter == 300:
-            return self.observation, -10, True, {}
+            return self.observation, -1, True, {}
         if self.observation == self.goal_state:
-            return self.observation, 10, True, {}
-        return self.observation, -1, False, {}
+            return self.observation, 1, True, {}
+        return self.observation, -0.1, False, {}
         
     def reset(self):
         ''' resets the agent position back to the starting position'''

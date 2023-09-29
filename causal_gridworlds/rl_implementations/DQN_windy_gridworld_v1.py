@@ -73,7 +73,7 @@ class DQN(nn.Module):
             x = self.fcf(x)
         else:
             x = torch.relu(self.fci(x.view(-1, self.state_size)))
-            torch.relu(self.fc1(x))
+            x = torch.relu(self.fc1(x))
             x = torch.tanh(self.fc2(x))
             # x = torch.tanh(self.fc3(x))
             # x = torch.relu(self.fc4(x))
@@ -131,7 +131,7 @@ class DQNAgent:
         self.greedy_interval = greedy_interval
         self.epsilon_min = 0.01
         self.final_lr = 1e-6
-        self.replay_memory = ReplayMemory(512)
+        self.replay_memory = ReplayMemory(1024)
         self.model = DQN(state_size, action_size, hidden_dim).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.loss = nn.MSELoss()
@@ -156,7 +156,7 @@ class DQNAgent:
         if len(self.replay_memory) < batch_size:
             return
         
-        # random.shuffle(self.replay_memory.memory)
+        random.shuffle(self.replay_memory.memory)
         states, actions, rewards, next_states, dones = self.replay_memory.sample(batch_size)
         
 
@@ -248,7 +248,7 @@ Q_table, step_count, greedy_step_count, avg_greedy_step_count = agent.train(env,
 
 running_average = moving_average(step_count)
 
-experiment_number = 101
+experiment_number = 102
 
 np.save("DQN-Vanilla-GW-Step_count-greedy_eval_h256p_{}.npy".format(experiment_number), step_count)
 np.save("DQN-Vanilla-GW-Greedy_Step_count-greedy_eval_h256_{}.npy".format(experiment_number), avg_greedy_step_count)
