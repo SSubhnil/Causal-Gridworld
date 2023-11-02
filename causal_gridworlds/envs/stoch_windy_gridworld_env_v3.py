@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+Created on Mon Oct  9 11:36:08 2023
+
+@author: shubh
+@details: Stochastic Windy Gridworld environment where wind changes every episode.
+"""
+
+# -*- coding: utf-8 -*-
 from __future__ import print_function
 import numpy as np
 import gym
@@ -7,7 +15,7 @@ from gym.utils import seeding
 import sys
 
 
-class StochKingWindyGridWorldEnv(gym.Env):
+class StochWindyGridWorldEnv_V3(gym.Env):
     '''Creates the Stochastic Windy GridWorld Environment
        NOISE_CASE = 1: the noise is a scalar added to the wind tiles, i.e,
                        all wind tiles are changed by the same amount
@@ -30,23 +38,19 @@ class StochKingWindyGridWorldEnv(gym.Env):
         self.reward = REWARD
         self.range_random_wind = RANGE_RANDOM_WIND
         self.probablities = PROB
-        self.action_space =  spaces.Discrete(8)
+        self.action_space =  spaces.Discrete(4)
         self.observation_space = spaces.Tuple((
                 spaces.Discrete(self.grid_height),
                 spaces.Discrete(self.grid_width)))
         self.actions = { 'U':0,   #up
                          'R':1,   #right
                          'D':2,   #down
-                         'L':3,   #left
-                         'UR':4,  #up-right
-                         'DR':5,  #down-right
-                         'DL':6,  #down-left
-                         'UL':7 } #up-left
+                         'L':3}  #left
         self.num_wind_tiles = np.count_nonzero(self.wind)
         self.noise_case = NOISE_CASE
         self.nA = len(self.actions)
         self.step_counter = 0
-        
+    
     def wind_generator(self):
         "Updates the wind profile every time reset() is called"
         rang = np.arange(-self.range_random_wind, self.range_random_wind + 1 )
@@ -60,8 +64,8 @@ class StochKingWindyGridWorldEnv(gym.Env):
         noise = noise1 if self.noise_case==1 else noise2
         wind = np.copy(self.wind)
         wind[np.where( wind > 0 )] += noise
-        self.realized_wind = wind
-        
+        self.realized_wind = wind        
+                
     def action_destination(self, state, action):
         '''set up destinations for each action in each state'''
         i, j= state
@@ -75,15 +79,6 @@ class StochKingWindyGridWorldEnv(gym.Env):
                                                max(j - 1, 0))
         destination[self.actions['R']] = (max(i - self.realized_wind[j], 0),\
                                            min(j + 1, self.grid_width - 1))
-        destination[self.actions['UR']] = (max(i - 1 - self.realized_wind[j], 0),\
-                                           min(j + 1, self.grid_width - 1))
-        destination[self.actions['DR']] = (max(min(i + 1 - self.realized_wind[j],\
-                                           self.grid_height - 1), 0), min(j + 1,\
-                                           self.grid_width - 1))
-        destination[self.actions['DL']] = (max(min(i + 1 - self.realized_wind[j],\
-                                      self.grid_height - 1), 0), max(j - 1, 0))         
-        destination[self.actions['UL']] = (max(i - 1 - self.realized_wind[j], 0),\
-                                           max(j - 1, 0))
        
         return destination[action]
     
@@ -114,13 +109,13 @@ class StochKingWindyGridWorldEnv(gym.Env):
         if self.step_counter == 300:
             return self.observation, -1, True
         if self.observation == self.goal_state:
-            return self.observation, 1, True
+            return self.observation, 2, True
         return self.observation, -0.5, False
         
     def reset(self):
         ''' resets the agent position back to the starting position'''
-        self.observation = self.start_state
         self.step_counter = 0
+        self.observation = self.start_state
         self.wind_generator()
         return self.observation   
 
@@ -159,6 +154,3 @@ class StochKingWindyGridWorldEnv(gym.Env):
         ''' sets the seed for the envirnment'''
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
-         
-
-        

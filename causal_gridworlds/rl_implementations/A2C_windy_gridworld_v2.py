@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Sep  6 15:50:24 2023
+Created on Thu Oct 12 15:08:15 2023
 
-@author: SSubhnil
-@details: Advantage actor-critic for the Gridworld environment.
+@author: shubh
+@details: A2C 4-actions Windy Gridworld (Ver 2) with Entropy Regularization
+          A2C gets stuck in bad policies resulting in no reward.
+          Entropy regularization breaks the policy by maximizing an entropy term
+          along with the total loss function.
 """
 
 import torch
@@ -39,7 +42,7 @@ if is_ipython:
     
 import wandb
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-run = wandb.init(project="A2C-4A-Windy-GW_2x64")
+run = wandb.init(project="Sweep-A2C-4A-Windy-GW_2x32")#, mode="disabled")
 
 grid_dimensions = (env.grid_height, env.grid_width)
 
@@ -158,50 +161,49 @@ class A2C:
                 
                 # Actor loss
                 action_probs = self.actor(states)
-                # print("Action probs:", action_probs)
                 actions = actions.view(-1, 1).long() # Convert actions into int64
-                
                 log_probs = -torch.log(action_probs.gather(1, actions))
                 actor_loss = log_probs * advantage.view(-1, 1)
-                # print("Actor loss shape:", actor_loss.shape)
                 actor_loss = actor_loss.mean()
+                
+                # Calculate policy entropy
+                entropy_weight = 0.1
+                entropy = -torch.sum(action_probs * torch.log(action_probs), dim=1).mean()
+
+                # Introducing total_loss instead of just actor_loss
+                total_loss = actor_loss - entropy_weight * entropy
+                
+                # Train network on total_loss instead of actor_loss
                 self.optimizer_actor.zero_grad()
-                actor_loss.backward()
+                total_loss.backward()
                 self.optimizer_actor.step() 
     
                 # Critic loss
                 critic_loss = delta.pow(2).mean()
-                # print("critic loss:", critic_loss.shape)
                 self.optimizer_critic.zero_grad()
                 critic_loss.backward()
                 self.optimizer_critic.step()
     
             # Clear the replay buffer after updating
             self.replay_buffer.buffer.clear()
-                
-            # try:
-            #     wandb.log({'Critic_loss': critic_loss, 'Actor_loss': actor_loss})
-            # except:
-            #     print("WandB loss log failed")
-    
-        # wandb.watch(self.actor, self.critic, criterion = critic_loss, log = "all", log_freq = 1000, idx = [0, 1], log_graph = True)
             
 # Example usage;
 if __name__ == "__main__":
     # Define environment dimensions and action space
     state_dim = 2
     action_dim = env.nA
-    hidden_dim = 64
-    num_episodes = 30000
+    hidden_dim = 32
+    num_episodes = 50000
     greedy_interval = 5000
-    learning_rate_actor = 1e-4
+    learning_rate_actor = 3e-4
     learning_rate_critic = 1e-3
-    lr_actor_final = 1e-7
+    lr_actor_final = 1e-6
     lr_decay = abs(learning_rate_actor - lr_actor_final)/num_episodes
     current_lr_actor = learning_rate_actor
     current_lr_critic = learning_rate_critic
-    batch_size = 1024
+    batch_size = 512
     buffer_size = 1024
+    entropy_weight = 1.0 # Low:[<0.001]; Moderate:[0.01, 0.1]; High:[>1.0]
     
     greedy_evaluation = evaluate(env, grid_dimensions, device)
     greedy_step_count = np.empty((int(num_episodes/greedy_interval), greedy_evaluation.num_episodes, 1))
@@ -241,9 +243,9 @@ if __name__ == "__main__":
         wandb.log({'Reward':episode_reward, 'Learning rate':current_lr_actor})
         
         # Learning Rate decay -> uncomment to implement
-        # for param_group in agent.optimizer_actor.param_groups:
-        #     param_group['lr'] = current_lr_actor                   
-        # current_lr_actor = current_lr_actor - lr_decay
+        for param_group in agent.optimizer_actor.param_groups:
+            param_group['lr'] = current_lr_actor                   
+        current_lr_actor = current_lr_actor - lr_decay
         
     wandb.finish()
     

@@ -8,7 +8,7 @@ import sys
 class KingWindyGridWorldEnv(gym.Env):
     '''Creates the King Windy GridWorld Environment''' # [0, 0, 0, 1, 1, 1, 2, 2, 1, 0]  # [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     def __init__(self, GRID_HEIGHT=7, GRID_WIDTH=10,\
-                 WIND = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], \
+                 WIND = [0, 0, 0, 1, 1, 1, 2, 2, 1, 0], \
                  START_STATE = (3, 0), GOAL_STATE = (3, 7),\
                  REWARD = -1):
         self.grid_height = GRID_HEIGHT
@@ -79,10 +79,10 @@ class KingWindyGridWorldEnv(gym.Env):
         assert self.action_space.contains(action)
         self.observation = self.action_destination[self.observation][action]
         if self.step_counter == 300:
-            return self.observation, -10, True, {}
+            return self.observation, -1, True, {}
         if self.observation == self.goal_state:
-            return self.observation, 10, True, {}
-        return self.observation, -1, False, {}
+            return self.observation, 2, True, {}
+        return self.observation, -0.5, False, {}
         
     def reset(self):
         ''' resets the agent position back to the starting position'''

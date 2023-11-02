@@ -34,7 +34,7 @@ import wandb
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
 
 wandb.init(
-    project="4-A-Windy-GW")
+    project="DQN-4A-Windy-GW")
 
 env = WindyGridWorldEnv()
 enco = rpt(env.observation_space) # Import OneHotEncoder for state representation
@@ -133,7 +133,7 @@ class DQNAgent:
         self.greedy_interval = greedy_interval
         self.epsilon_min = 0.01
         self.final_lr = 1e-5
-        self.replay_memory = ReplayMemory(2048)
+        self.replay_memory = ReplayMemory(1024)
         self.model = DQN(state_size, action_size, hidden_dim).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.loss = nn.MSELoss()
@@ -237,10 +237,10 @@ state_size = (env.observation_space[0].n, env.observation_space[1].n)
 action_size = env.nA
 batch_size = 512
 num_episodes = 50000
-alpha = 1e-3
+alpha = 3e-4
 discount_rate = 0.98
 greedy_interval = 3000
-epsilon_start = 1.0
+epsilon_start = 0.95
 epsilon_decay = epsilon_start/num_episodes
 hidden_dim = 32
 agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate,\

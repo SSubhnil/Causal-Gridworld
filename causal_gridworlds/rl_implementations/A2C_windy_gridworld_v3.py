@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Sep  6 15:50:24 2023
+Created on Fri Oct 13 15:17:31 2023
 
-@author: SSubhnil
-@details: Advantage actor-critic for the Gridworld environment.
+@author: shubh
+@details: A hyperparameter sweep code for A2C Windy GridWorld
 """
 
 import torch
@@ -39,7 +39,7 @@ if is_ipython:
     
 import wandb
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-run = wandb.init(project="A2C-4A-Windy-GW_2x64")
+
 
 grid_dimensions = (env.grid_height, env.grid_width)
 
@@ -106,12 +106,11 @@ class ReplayBuffer:
         return states, actions, rewards, next_states, dones
 
 class A2C:
-    def __init__(self, state_dim, action_dim, hidden_dim, lr_actor, lr_critic, lr_decay, buffer_size, batch_size, gamma=0.98):
+    def __init__(self, state_dim, action_dim, hidden_dim, lr_actor, lr_critic, buffer_size, batch_size, gamma=0.98):
         self.actor = Actor(state_dim, action_dim, hidden_dim).to(device)
         self.critic = Critic(state_dim, hidden_dim).to(device)
         self.current_lr_actor = lr_actor
         self.current_lr_critic = lr_critic
-        self.lr_decay = lr_decay
         self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=lr_actor)
         self.optimizer_critic = optim.Adam(self.critic.parameters(), lr=lr_critic)
         self.gamma = gamma
@@ -158,61 +157,52 @@ class A2C:
                 
                 # Actor loss
                 action_probs = self.actor(states)
-                # print("Action probs:", action_probs)
                 actions = actions.view(-1, 1).long() # Convert actions into int64
-                
                 log_probs = -torch.log(action_probs.gather(1, actions))
                 actor_loss = log_probs * advantage.view(-1, 1)
-                # print("Actor loss shape:", actor_loss.shape)
                 actor_loss = actor_loss.mean()
+                
+                # Calculate policy entropy
+                entropy_weight = 0.1
+                entropy = -torch.sum(action_probs * torch.log(action_probs), dim=1).mean()
+
+                # Introducing total_loss instead of just actor_loss
+                total_loss = actor_loss - entropy_weight * entropy
+                
+                # Train network on total_loss instead of actor_loss
                 self.optimizer_actor.zero_grad()
-                actor_loss.backward()
+                total_loss.backward()
                 self.optimizer_actor.step() 
     
                 # Critic loss
                 critic_loss = delta.pow(2).mean()
-                # print("critic loss:", critic_loss.shape)
                 self.optimizer_critic.zero_grad()
                 critic_loss.backward()
                 self.optimizer_critic.step()
     
             # Clear the replay buffer after updating
             self.replay_buffer.buffer.clear()
-                
-            # try:
-            #     wandb.log({'Critic_loss': critic_loss, 'Actor_loss': actor_loss})
-            # except:
-            #     print("WandB loss log failed")
-    
-        # wandb.watch(self.actor, self.critic, criterion = critic_loss, log = "all", log_freq = 1000, idx = [0, 1], log_graph = True)
             
-# Example usage;
-if __name__ == "__main__":
+
+
+def train_params(config):
     # Define environment dimensions and action space
     state_dim = 2
     action_dim = env.nA
-    hidden_dim = 64
-    num_episodes = 30000
-    greedy_interval = 5000
-    learning_rate_actor = 1e-4
+    hidden_dim = 32
+    num_episodes = config.num_episodes
+    learning_rate_actor = config.lr_actor
     learning_rate_critic = 1e-3
-    lr_actor_final = 1e-7
-    lr_decay = abs(learning_rate_actor - lr_actor_final)/num_episodes
-    current_lr_actor = learning_rate_actor
-    current_lr_critic = learning_rate_critic
-    batch_size = 1024
-    buffer_size = 1024
-    
-    greedy_evaluation = evaluate(env, grid_dimensions, device)
-    greedy_step_count = np.empty((int(num_episodes/greedy_interval), greedy_evaluation.num_episodes, 1))
-    avg_greedy_step_count = np.empty(int(num_episodes/greedy_interval))
-    step_count = np.empty((num_episodes, 1))
-    
+    batch_size = 256
+    buffer_size = 512
+    entropy_weight = 0.1 # Low:[<0.001]; Moderate:[0.01, 0.1]; High:[>1.0]
+    total_reward_per_param = 0
+           
     # Create teh A2C agent
-    agent = A2C(state_dim, action_dim, hidden_dim, learning_rate_actor, learning_rate_critic, lr_decay, buffer_size, batch_size)
+    agent = A2C(state_dim, action_dim, hidden_dim, learning_rate_actor, learning_rate_critic, buffer_size, batch_size)
     
-    wandb.watch(agent.actor, log='gradients', log_freq = 500, idx = 1, log_graph = True)
-    wandb.watch(agent.critic, log='gradients', log_freq = 500, idx = 2, log_graph = True)
+    # wandb.watch(agent.actor, log='gradients', log_freq = 500, idx = 1, log_graph = True)
+    # wandb.watch(agent.critic, log='gradients', log_freq = 500, idx = 2, log_graph = True)
     
     # Training loop (replace this with environment and data)
     for episode in range(num_episodes):
@@ -236,74 +226,27 @@ if __name__ == "__main__":
         
         if episode % 500 == 0:
             print("Episode: {}/{}, Reward: {}".format(episode+1, num_episodes, episode_reward))
-        step_count[episode, 0] = episode_reward
         
-        wandb.log({'Reward':episode_reward, 'Learning rate':current_lr_actor})
-        
-        # Learning Rate decay -> uncomment to implement
-        # for param_group in agent.optimizer_actor.param_groups:
-        #     param_group['lr'] = current_lr_actor                   
-        # current_lr_actor = current_lr_actor - lr_decay
-        
-    wandb.finish()
+        wandb.log({'Reward':episode_reward})
     
-    def moving_average(step_count, n = 300):
-        running_average = np.cumsum(step_count, dtype=float)
-        running_average[n:] = running_average[n:] - running_average[:-n]
-        return running_average[n - 1:] / n
-        
-    running_average = moving_average(step_count)
+        total_reward_per_param += episode_reward
+    return total_reward_per_param
 
-    experiment_number = 1
-    #%%
-    # np.save("A2C-GW-Step_count-greedy_eval_h{}_{}.npy".format(hidden_dim, experiment_number), step_count)
-    # np.save("A2C-GW-Greedy_Step_count-greedy_eval_h{}_{}.npy".format(hidden_dim, experiment_number), avg_greedy_step_count)
-        
-    #avg_step_count = np.average(mega_step_count, axis=0)
-    spacer1 = np.arange(1, len(running_average)+1)
-    spacer2 = np.arange(1, num_episodes, greedy_interval)
-
-    print("\n 0: Up, 1: Right, 2: Down, 3: Left")
-    print("\n Minimum: Steps:", min(step_count))
-
-    #%%
-    # Plotting Running Average
-    fig, ax1 = plt.subplots()
-
-    color = 'tab:red'
-    ax1.set_xlabel('Episodes')
-    ax1.set_ylabel('Running Average (steps/episode)', color=color)
-    ax1.plot(spacer1, running_average, color=color, label="Running Avg.")
-    ax1.tick_params(axis='y', labelcolor=color)
-
-    ax2 = ax1.twinx()
-
-    color = 'tab:blue'
-    ax2.set_ylabel('Greedy Evaluations (steps/batch)', color=color)
-    ax2.plot(spacer2, avg_greedy_step_count, color=color, label="Greedy Eval.")
-    for x,y in zip(spacer2, avg_greedy_step_count):
-        ax2.annotate('%s' % y, xy=(x,y), textcoords = 'data')
-    ax2.tick_params(axis='y', labelcolor=color)
-
-    # plt.xlabel('Episodes')
-    # plt.ylabel('Running Average (steps/episode)')
-    # plt.legend('Min_step', min(step_count))
-    plt.title('A2C-4A-GW_2x64 alp=%f' % learning_rate_actor)
-    plt.legend(loc="upper right")
-    plt.savefig('A2C-4A-GW-2x64_h{}_{}.png'.format(hidden_dim, experiment_number), dpi=600)
+def main():
+    wandb.init(project="Sweep-A2C-4A-Windy-GW")#, mode="disabled")
+    total_reward_per_param = train_params(wandb.config)
+    wandb.log({'Total_Reward':total_reward_per_param})
     
-    # run.log({"A2C-Vanilla-GW-h{}".format(hidden_dim):fig})
 
-    #%%
-    # plt.figure()
-    # plt.title("Greedy Evaluation Batches")
-    # plt.xlabel("Greedy Episodes")
-    # plt.ylabel("Greedy Steps")
-    # for k in range(0, np.shape(greedy_step_count)[0]):
-    #     running_avg_greedy_step_count = moving_average(greedy_step_count[k,:,0], n = 15)
-    #     spacer3 = np.arange(0, len(running_avg_greedy_step_count))
-    #     plt.plot(spacer3, running_avg_greedy_step_count, label = "Batch={}".format(k))
-    # plt.legend()
-    # plt.savefig("A2C-4A-GW-greedy_episodes_h{}_{}.png".format(hidden_dim, experiment_number), dpi = 600)
-    
+sweep_configuration = {
+    "method": "random",
+    "metric": {"goal": "maximize", "name": "total_reward_per_param"},
+    "parameters":{
+        "lr_actor": {"values": [1e-2, 7e-3, 3e-3, 1e-3]},
+        "num_episodes": {"values": [25000]}}}
+
+sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-A2C-4A-Windy-GW")
+
+wandb.agent(sweep_id, function = main, count=16)
+wandb.finish()
     

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Sep  6 15:50:24 2023
+Created on Wed Oct 4 17:28:24 2023
 
 @author: SSubhnil
-@details: Advantage actor-critic for the Gridworld environment.
+@details: Advantage actor-critic for the King-action Gridworld environment.
 """
 
 import torch
@@ -26,9 +26,9 @@ os.chdir('..')
 from util.util import PlotUtil
 from util.util import RepresentationTools as rpt
 from util.static_wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
-from envs.windy_gridworld_env import WindyGridWorldEnv
+from envs.king_windy_gridworld_env import KingWindyGridWorldEnv
 
-env = WindyGridWorldEnv()
+env = KingWindyGridWorldEnv()
 np.random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("using device:", device)
@@ -38,8 +38,10 @@ if is_ipython:
     from IPython import display
     
 import wandb
+
+
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-run = wandb.init(project="A2C-4A-Windy-GW_2x64")
+run = wandb.init(project="A2C-King-Windy-GW")#, mode="disabled")
 
 grid_dimensions = (env.grid_height, env.grid_width)
 
@@ -106,12 +108,9 @@ class ReplayBuffer:
         return states, actions, rewards, next_states, dones
 
 class A2C:
-    def __init__(self, state_dim, action_dim, hidden_dim, lr_actor, lr_critic, lr_decay, buffer_size, batch_size, gamma=0.98):
+    def __init__(self, state_dim, action_dim, hidden_dim, lr_actor, lr_critic, buffer_size, batch_size, gamma=0.98):
         self.actor = Actor(state_dim, action_dim, hidden_dim).to(device)
         self.critic = Critic(state_dim, hidden_dim).to(device)
-        self.current_lr_actor = lr_actor
-        self.current_lr_critic = lr_critic
-        self.lr_decay = lr_decay
         self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=lr_actor)
         self.optimizer_critic = optim.Adam(self.critic.parameters(), lr=lr_critic)
         self.gamma = gamma
@@ -132,57 +131,52 @@ class A2C:
     def train(self, state, action, reward, next_state, done):
         # Add experience to the replay buffer
         experience = Experience(state, action, reward, next_state, done)
-        self.replay_buffer.add_experience(experience)
+        self.replay_buffer.add_experience(experience)        
         
         # Check if the buffer is filled
         if len(self.replay_buffer.buffer) == self.buffer_size:
-            for i in range(int(self.buffer_size/self.batch_size)):
+            # for i in range(int(self.buffer_size/self.batch_size)):
             
-                # Sample a batch of experience from the replay buffer
-                states, actions, rewards, next_states, dones = self.replay_buffer.sample_batch(self.batch_size)
-                
-                states = torch.FloatTensor(states).to(device)
-                next_states = torch.FloatTensor(next_states).to(device)
-                actions = torch.FloatTensor(actions).to(device)
-                rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device) #
-                dones = torch.FloatTensor(dones).unsqueeze(1).to(device) #  shape = [512]
-                # print("Shapes: States->{}, N_States->{}, Actions->{}, Rewards->{}, Dones->{}".\
-                #       format(states.shape, next_states.shape, actions.shape, rewards.shape, dones.shape))
-                
-                
-                #Calculate advantages
-                values = self.critic(states) # shape = [512, 1]
-                next_values = self.critic(next_states) # shape = [512, 1]
-                delta = rewards + (self.gamma * next_values * (1 - dones)) - values
-                advantage = delta.detach()
-                
-                # Actor loss
-                action_probs = self.actor(states)
-                # print("Action probs:", action_probs)
-                actions = actions.view(-1, 1).long() # Convert actions into int64
-                
-                log_probs = -torch.log(action_probs.gather(1, actions))
-                actor_loss = log_probs * advantage.view(-1, 1)
-                # print("Actor loss shape:", actor_loss.shape)
-                actor_loss = actor_loss.mean()
-                self.optimizer_actor.zero_grad()
-                actor_loss.backward()
-                self.optimizer_actor.step() 
-    
-                # Critic loss
-                critic_loss = delta.pow(2).mean()
-                # print("critic loss:", critic_loss.shape)
-                self.optimizer_critic.zero_grad()
-                critic_loss.backward()
-                self.optimizer_critic.step()
+            # Sample a batch of experience from the replay buffer
+            states, actions, rewards, next_states, dones = self.replay_buffer.sample_batch(self.batch_size)
+            
+            states = torch.FloatTensor(states).to(device)
+            next_states = torch.FloatTensor(next_states).to(device)
+            actions = torch.FloatTensor(actions).to(device)
+            rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device) #
+            dones = torch.FloatTensor(dones).unsqueeze(1).to(device) #  shape = [512]
+            # print("Shapes: States->{}, N_States->{}, Actions->{}, Rewards->{}, Dones->{}".\
+            #       format(states.shape, next_states.shape, actions.shape, rewards.shape, dones.shape))
+            
+            
+            #Calculate advantages
+            values = self.critic(states) # shape = [512, 1]
+            next_values = self.critic(next_states) # shape = [512, 1]
+            delta = rewards + (self.gamma * next_values * (1 - dones)) - values
+            advantage = delta.detach()
+            
+            # Actor loss
+            action_probs = self.actor(states)
+            # print("Action probs:", action_probs)
+            actions = actions.view(-1, 1).long() # Convert actions into int64
+            
+            log_probs = -torch.log(action_probs.gather(1, actions))
+            actor_loss = log_probs * advantage.view(-1, 1)
+            # print("Actor loss shape:", actor_loss.shape)
+            actor_loss = actor_loss.mean()
+            self.optimizer_actor.zero_grad()
+            actor_loss.backward()
+            self.optimizer_actor.step() 
+
+            # Critic loss
+            critic_loss = delta.pow(2).mean()
+            # print("critic loss:", critic_loss.shape)
+            self.optimizer_critic.zero_grad()
+            critic_loss.backward()
+            self.optimizer_critic.step()
     
             # Clear the replay buffer after updating
             self.replay_buffer.buffer.clear()
-                
-            # try:
-            #     wandb.log({'Critic_loss': critic_loss, 'Actor_loss': actor_loss})
-            # except:
-            #     print("WandB loss log failed")
     
         # wandb.watch(self.actor, self.critic, criterion = critic_loss, log = "all", log_freq = 1000, idx = [0, 1], log_graph = True)
             
@@ -191,12 +185,12 @@ if __name__ == "__main__":
     # Define environment dimensions and action space
     state_dim = 2
     action_dim = env.nA
-    hidden_dim = 64
-    num_episodes = 30000
+    hidden_dim = 32
+    num_episodes = 40000
     greedy_interval = 5000
-    learning_rate_actor = 1e-4
+    learning_rate_actor = 1e-3
     learning_rate_critic = 1e-3
-    lr_actor_final = 1e-7
+    lr_actor_final = 1e-5
     lr_decay = abs(learning_rate_actor - lr_actor_final)/num_episodes
     current_lr_actor = learning_rate_actor
     current_lr_critic = learning_rate_critic
@@ -209,7 +203,7 @@ if __name__ == "__main__":
     step_count = np.empty((num_episodes, 1))
     
     # Create teh A2C agent
-    agent = A2C(state_dim, action_dim, hidden_dim, learning_rate_actor, learning_rate_critic, lr_decay, buffer_size, batch_size)
+    agent = A2C(state_dim, action_dim, hidden_dim, learning_rate_actor, learning_rate_critic, buffer_size, batch_size)
     
     wandb.watch(agent.actor, log='gradients', log_freq = 500, idx = 1, log_graph = True)
     wandb.watch(agent.critic, log='gradients', log_freq = 500, idx = 2, log_graph = True)
@@ -222,6 +216,8 @@ if __name__ == "__main__":
         #         = greedy_evaluation.run_algo(self.learning_rate, self.model)
         #     sampling_counter += 1
         
+        percent_completion = (episode+1)/num_episodes
+        
         state = env.reset()
         # state = env.reset()
         done = False
@@ -232,19 +228,23 @@ if __name__ == "__main__":
             action = agent.select_action(state)
             next_state, reward, done, _ = env.step(action)
             agent.train(state, action, reward, next_state, done)
-            episode_reward += reward        
+            episode_reward += reward
+        
+        
+        wandb.log({'Reward':episode_reward})
+        
         
         if episode % 500 == 0:
             print("Episode: {}/{}, Reward: {}".format(episode+1, num_episodes, episode_reward))
         step_count[episode, 0] = episode_reward
         
-        wandb.log({'Reward':episode_reward, 'Learning rate':current_lr_actor})
+        wandb.log({'Learning Rate':current_lr_actor}) 
         
         # Learning Rate decay -> uncomment to implement
-        # for param_group in agent.optimizer_actor.param_groups:
-        #     param_group['lr'] = current_lr_actor                   
-        # current_lr_actor = current_lr_actor - lr_decay
-        
+        for param_group in agent.optimizer_actor.param_groups:
+            param_group['lr'] = current_lr_actor                   
+        current_lr_actor = current_lr_actor - lr_decay
+    
     wandb.finish()
     
     def moving_average(step_count, n = 300):
@@ -254,7 +254,7 @@ if __name__ == "__main__":
         
     running_average = moving_average(step_count)
 
-    experiment_number = 1
+    experiment_number = 2
     #%%
     # np.save("A2C-GW-Step_count-greedy_eval_h{}_{}.npy".format(hidden_dim, experiment_number), step_count)
     # np.save("A2C-GW-Greedy_Step_count-greedy_eval_h{}_{}.npy".format(hidden_dim, experiment_number), avg_greedy_step_count)
@@ -288,22 +288,22 @@ if __name__ == "__main__":
     # plt.xlabel('Episodes')
     # plt.ylabel('Running Average (steps/episode)')
     # plt.legend('Min_step', min(step_count))
-    plt.title('A2C-4A-GW_2x64 alp=%f' % learning_rate_actor)
+    plt.title('A2C-King-GW alp=%f' % learning_rate_actor)
     plt.legend(loc="upper right")
-    plt.savefig('A2C-4A-GW-2x64_h{}_{}.png'.format(hidden_dim, experiment_number), dpi=600)
+    plt.savefig('A2C-King-GW-test_h{}_{}.png'.format(hidden_dim, experiment_number), dpi=600)
     
     # run.log({"A2C-Vanilla-GW-h{}".format(hidden_dim):fig})
 
     #%%
-    # plt.figure()
-    # plt.title("Greedy Evaluation Batches")
-    # plt.xlabel("Greedy Episodes")
-    # plt.ylabel("Greedy Steps")
-    # for k in range(0, np.shape(greedy_step_count)[0]):
-    #     running_avg_greedy_step_count = moving_average(greedy_step_count[k,:,0], n = 15)
-    #     spacer3 = np.arange(0, len(running_avg_greedy_step_count))
-    #     plt.plot(spacer3, running_avg_greedy_step_count, label = "Batch={}".format(k))
-    # plt.legend()
-    # plt.savefig("A2C-4A-GW-greedy_episodes_h{}_{}.png".format(hidden_dim, experiment_number), dpi = 600)
+    plt.figure()
+    plt.title("Greedy Evaluation Batches")
+    plt.xlabel("Greedy Episodes")
+    plt.ylabel("Greedy Steps")
+    for k in range(0, np.shape(greedy_step_count)[0]):
+        running_avg_greedy_step_count = moving_average(greedy_step_count[k,:,0], n = 15)
+        spacer3 = np.arange(0, len(running_avg_greedy_step_count))
+        plt.plot(spacer3, running_avg_greedy_step_count, label = "Batch={}".format(k))
+    plt.legend()
+    plt.savefig("A2C-King-GW-greedy_episodes_h{}_{}.png".format(hidden_dim, experiment_number), dpi = 600)
     
     
