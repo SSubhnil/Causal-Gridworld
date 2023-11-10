@@ -14,11 +14,11 @@ class KingWindyGridWorldEnv(gym.Env):
         self.grid_height = GRID_HEIGHT
         self.grid_width = GRID_WIDTH
         self.wind = WIND
-        self.start_state = np.array(START_STATE)
-        self.goal_state = np.array(GOAL_STATE)
-        self.observation = np.array(START_STATE)
+        self.start_state = START_STATE
+        self.goal_state = GOAL_STATE
+        self.observation = START_STATE
         self.reward = REWARD
-        self.action_space =  spaces.Discrete(8)
+        self.action_space = spaces.Discrete(8)
         self.observation_space = spaces.Tuple((
                 spaces.Discrete(self.grid_height),
                 spaces.Discrete(self.grid_width)))
@@ -78,8 +78,7 @@ class KingWindyGridWorldEnv(gym.Env):
         self.step_counter += 1
         assert self.action_space.contains(action)
         self.observation = self.action_destination[self.observation][action]
-        self.observation - np.array(self.observation)
-        if self.step_counter == 300:
+        if self.step_counter == 200:
             return self.observation, -1, True, {}
         if self.observation == self.goal_state:
             return self.observation, 2, True, {}
