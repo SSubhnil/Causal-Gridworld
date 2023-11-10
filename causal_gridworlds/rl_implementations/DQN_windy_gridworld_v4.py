@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Oct 29 14:47:07 2023
-
+Created on Mon Nov  6 15:48:36 2023
 
 @author: SSubhnil
-@details: DQN code for Windy GridWorld_v3 - For sweep and debugging with WandB
+@details: DQN code for Windy GridWorld_v4 - Trying simpler data handling
 """
 import math
 import random
@@ -22,25 +21,25 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 import os
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-os.chdir('..')
+# os.chdir(os.path.dirname(os.path.abspath(__file__)))
+# os.chdir('..')
 
-from util.util import PlotUtil
-from util.util import RepresentationTools as rpt
-from util.static_wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
-from envs.windy_gridworld_env import WindyGridWorldEnv
+#from util.util import PlotUtil
+#from util.util import RepresentationTools as rpt
+#from util.static_wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
+from custom_envs.windy_gridworld_env import WindyGridWorldEnv
 
 import wandb
 
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
 
-wandb.init(project="DQN-4A-Windy-GW-2x32", mode="disabled")
+wandb.init(project="DQN-4A-Windy-GW-2x32")#, mode="disabled")
 
 # wandb.init(
 #     project="DQN-4A-Windy-GW", mode='disabled')
 
 env = WindyGridWorldEnv()
-enco = rpt(env.observation_space) # Import OneHotEncoder for state representation
+
 np.random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # device = torch.device("cpu")
@@ -64,14 +63,14 @@ class DQN(nn.Module):
         hidden_dim = hidden_size
         self.fci = nn.Linear(state_size, hidden_dim)
         self.fc1 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        # self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         # self.fc34 = nn.Linear(hidden_dim, hidden_dim)
         self.fcf = nn.Linear(hidden_dim, action_size)
 
     def forward(self, x):
         x = torch.relu(self.fci(x))
         x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
+        # x = torch.relu(self.fc2(x))
         # x = torch.tanh(self.fc3(x))
         x = torch.tanh(self.fcf(x))
         return x
@@ -94,17 +93,11 @@ class ReplayMemory:
         batch = random.sample(self.memory, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
         return states, actions, rewards, next_states, dones
-        # return (
-        #     torch.cat(states).to(device),
-        #     torch.tensor(actions).to(device),
-        #     torch.tensor(rewards).to(device),
-        #     torch.cat(next_states).to(device),
-        #     torch.tensor(dones).to(device)
-        # )
     
     def unpack(self):
         batch = self.memory
         states, actions, rewards, next_states, dones = zip(*batch)
+        
         return (
             torch.cat(states).to(device),
             torch.tensor(actions).to(device),
@@ -133,7 +126,6 @@ class DQNAgent:
         self.model = DQN(state_size, action_size, hidden_dim).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.loss = nn.MSELoss()
-        self.Q_table = np.empty((env.grid_height, env.grid_width, env.nA))
         self.total_reward_per_param = 0
 
     def choose_action(self, state):
@@ -145,9 +137,6 @@ class DQNAgent:
             return torch.argmax(q_values).item()
 
     def remember(self, state, action, reward, next_state, done):
-        state = torch.tensor(np.array(state).reshape(1, -1), dtype=torch.float32).to(device)
-        print("state", state)
-        next_state = torch.tensor(np.array(next_state).reshape(1, -1), dtype=torch.float32).to(device)
         self.replay_memory.push(state, action, reward, next_state, done)
 
     def replay(self, percent_completion):
@@ -158,10 +147,16 @@ class DQNAgent:
                 
                 states, actions, rewards, next_states, dones = self.replay_memory.sample(self.batch_size)
                 
+                states = torch.FloatTensor(states).to(device)
+                next_states = torch.FloatTensor(next_states).to(device)
+                actions = torch.FloatTensor(actions).to(device = device, dtype = int)
+                rewards = torch.FloatTensor(rewards).to(device) #
+                dones = torch.FloatTensor(dones).to(device) #  shape = [512]
+                
         
-                current_q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1).to(device)
+                current_q_values = (self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)).to(device)
                 next_q_values = self.model(next_states).max(1)[0].detach()
-                target_q_values = rewards + self.discount_rate * next_q_values * (1 - dones.float()).to(device)
+                target_q_values = (rewards + self.discount_rate * next_q_values * (1 - dones.float())).to(device)
                 
                 loss = self.loss(current_q_values, target_q_values)
                 self.optimizer.zero_grad()
@@ -170,15 +165,11 @@ class DQNAgent:
             self.replay_memory.memory.clear()
 
     def train(self, episodes):
-        # Initialize the greedy evaluation
-        state = env.reset()
-        
         for episode in range(episodes):
             
             percent_completion = (episode+1)/episodes
             
             state = env.reset()
-            # state = env.reset()
             done = False
             
             # Epsilon annealing - exponential decay
@@ -207,26 +198,26 @@ class DQNAgent:
         return self.total_reward_per_param
 
 
+
 state_size = 2
 action_size = env.nA
 batch_size = 256
 buffer_size = 512
 num_episodes = 40000
-alpha = [1e-3, 7e-4, 3e-4, 1e-4, 7e-5]
-discount_rate = 0.98
+alpha = 1e-4
+discount_rate = 0.95
 greedy_interval = 3000
 epsilon_start = 0.95
 epsilon_decay = epsilon_start/num_episodes
 hidden_dim = 32
 
-for i in range(len(alpha)):
     
-    agent = DQNAgent(state_size, action_size, hidden_dim, alpha[i], discount_rate,\
-                     epsilon_start, epsilon_decay, buffer_size, batch_size)
-    
-    total_reward_per_param = agent.train(num_episodes)
-    
-    wandb.log({'Total Reward per param': total_reward_per_param, 'Learning Rate': alpha})
+agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate,\
+                 epsilon_start, epsilon_decay, buffer_size, batch_size)
+
+total_reward_per_param = agent.train(num_episodes)
+
+# wandb.log({'Total Reward per param': total_reward_per_param, 'Learning Rate': alpha})
 
 # sweep_configuration = {
 #     "method": "random",
