@@ -16,12 +16,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from custom_envs.king_windy_gridworld_env import WindyGridWorldEnv
+from custom_envs.windy_gridworld_env import WindyGridWorldEnv
 import gym
 import wandb
 
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-wandb.init(project="DQN-4A-Windy-GW-2x32")#, mode="disabled")
+# wandb.init(project="DQN-4A-Vanilla-GW-2x32", mode="disabled")
 env = WindyGridWorldEnv()
 
 np.random.seed(42)
@@ -37,6 +37,9 @@ if is_ipython:
     from IPython import display
 
 # grid_dimensions = (env.grid_height, env.grid_width)
+
+# Update target network separately from training loop.
+# Solve the gradient every time step.
 
 # Define the DQN class
 class DQN(nn.Module):
@@ -92,7 +95,7 @@ class ReplayMemory:
 
 class DQNAgent:
     def __init__(self, state_size, action_size, hidden_dim, learning_rate, discount_rate, epsilon, epsilon_decay,
-                 buffer_size, batch_size, greedy_interval, target_update_freq, TAU = 0.005):
+                 buffer_size, batch_size, greedy_interval, TAU = 0.005):
         self.state_size = state_size
         self.action_size = action_size
         self.hidden_dim = hidden_dim
@@ -112,7 +115,6 @@ class DQNAgent:
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         self.total_reward_per_param = 0
-        self.target_update_freq = target_update_freq
         self.greedy_interval = greedy_interval
         self.tau = TAU
 
@@ -136,7 +138,7 @@ class DQNAgent:
         self.replay_memory.push(state, action, reward, next_state, done)
 
     def replay(self, percent_completion):
-        if len(self.replay_memory) > self.batch_size:
+        if len(self.replay_memory) == self.buffer_size:
 
             states, actions, rewards, next_states, dones = self.replay_memory.sample(self.batch_size)
 
@@ -175,8 +177,17 @@ class DQNAgent:
             episode_reward = 0
             greedy_episode_reward = 0
 
-            "Greedy Evaluation Episodes"
+            "Greedy Evaluation + Target network soft-update"
             if episode % self.greedy_interval == 0:
+                # Soft update of the target network's weights
+                # θ′ ← τ θ + (1 −τ )θ′
+                target_net_state_dict = self.target_net.state_dict()
+                policy_net_state_dict = self.policy_net.state_dict()
+                for key in policy_net_state_dict:
+                    target_net_state_dict[key] = policy_net_state_dict[key] * self.tau + target_net_state_dict[key] * (
+                            1 - self.tau)
+                self.target_net.load_state_dict(target_net_state_dict)
+
                 while not done:
                     action = self.choose_greedy_action(state)
 
@@ -190,9 +201,9 @@ class DQNAgent:
                                                                                               greedy_episode_reward,
                                                                                               self.epsilon,
                                                                                               self.learning_rate))
-            "Target network update"
-            if episode % self.target_update_freq == 0:
-                self.target_net.load_state_dict(self.policy_net.state_dict())
+
+            if len(self.replay_memory) <= self.buffer_size:
+                episode -= 1
 
             while not done:
                 action = self.choose_action(state)
@@ -203,17 +214,8 @@ class DQNAgent:
 
                 episode_reward += reward
                 state = next_state
+                self.replay(percent_completion)
 
-                if step_counter % 50 == 0:
-                    self.replay(percent_completion)
-                    # Soft update of the target network's weights
-                    # θ′ ← τ θ + (1 −τ )θ′
-                    target_net_state_dict = self.target_net.state_dict()
-                    policy_net_state_dict = self.policy_net.state_dict()
-                    for key in policy_net_state_dict:
-                        target_net_state_dict[key] = policy_net_state_dict[key] * self.tau + target_net_state_dict[key] * (
-                                    1 - self.tau)
-                    self.target_net.load_state_dict(target_net_state_dict)
                 step_counter += 1
 
             wandb.log({'Reward': episode_reward, 'Epsilon': self.epsilon, \
@@ -223,38 +225,41 @@ class DQNAgent:
 
         return self.total_reward_per_param
 
-# def train_params(config):
+def train_params(config):
 
-state_size = 2
-action_size = env.nA
-batch_size = 512
-buffer_size = 4096
-num_episodes = 40000
-alpha = 1e-4
-discount_rate = 0.998
-greedy_interval = 500
-target_update_freq = 50
-epsilon_start = 0.9
-epsilon_decay = epsilon_start / num_episodes
-hidden_dim = 32
+    state_size = 2
+    action_size = env.nA
+    batch_size = config.batch_size
+    buffer_size = 8192
+    num_episodes = 20000
+    alpha = config.alpha
+    discount_rate = 0.98
+    greedy_interval = 500
+    epsilon_start = 0.9
+    epsilon_decay = epsilon_start / num_episodes
+    hidden_dim = config.hidden_dim
 
-agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate, \
-             epsilon_start, epsilon_decay, buffer_size, batch_size, greedy_interval, target_update_freq)
+    agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate, \
+                 epsilon_start, epsilon_decay, buffer_size, batch_size, greedy_interval)
 
-total_reward_per_param = agent.train(num_episodes)
+    total_reward_per_param = agent.train(num_episodes)
 
-# def main():
-#     wandb.init(project="Sweep-DQN-4A-Windy-GW-2x32", mode="disabled")
-#     total_reward_per_param = train_params(wandb.config)
-#     wandb.log({'Total Reward per param': total_reward_per_param})
-#
-# sweep_configuration = {
-#     "method": "random",
-#     "metric": {"goal": "maximize", "name": "total_reward_per_param"},
-#     "parameters": {
-#         "alpha": {"values": [1e-3, 7e-4, 3e-4, 1e-4, 7e-5, 3e-5]}}}
-#
-# sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-King-Windy-GW-2x32")
-#
-# wandb.agent(sweep_id, function = main, count=6)
+    return total_reward_per_param
+
+def main():
+    wandb.init(project="Sweep-DQN-4A-Windy-GW-2x32")#, mode="disabled")
+    total_reward_per_param = train_params(wandb.config)
+    wandb.log({'Total Reward per param': total_reward_per_param})
+
+sweep_configuration = {
+    "method": "random",
+    "metric": {"goal": "maximize", "name": "total_reward_per_param"},
+    "parameters": {
+        "alpha": {"values": [1e-3, 7e-4, 3e-4, 1e-4, 7e-5]},
+        "batch_size": {"values": [256, 512]},
+        "hidden_dim": {"values": [32, 64]}}}
+
+sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-4A-Windy-GW-2x32")
+
+wandb.agent(sweep_id, function = main, count=20)
 wandb.finish()
