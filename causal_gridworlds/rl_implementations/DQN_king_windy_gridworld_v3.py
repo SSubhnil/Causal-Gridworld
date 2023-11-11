@@ -21,7 +21,6 @@ import gym
 import wandb
 
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-wandb.init(project="DQN-King-Windy-GW-2x32")#, mode="disabled")
 env = KingWindyGridWorldEnv()
 
 np.random.seed(42)
@@ -92,7 +91,7 @@ class ReplayMemory:
 
 class DQNAgent:
     def __init__(self, state_size, action_size, hidden_dim, learning_rate, discount_rate, epsilon, epsilon_decay,
-                 buffer_size, batch_size, greedy_interval, target_update_freq, TAU = 0.005):
+                 buffer_size, batch_size, greedy_interval, TAU = 0.005):
         self.state_size = state_size
         self.action_size = action_size
         self.hidden_dim = hidden_dim
@@ -112,12 +111,8 @@ class DQNAgent:
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         self.total_reward_per_param = 0
-        self.target_update_freq = target_update_freq
         self.greedy_interval = greedy_interval
         self.tau = TAU
-
-        # wandb.watch(self.policy_net, log='all', log_freq=500, idx=1)
-        # wandb.watch(self.target_net, log='all', log_freq=500, idx=1)
 
     def choose_greedy_action(self, state):
         state = torch.tensor(state, dtype=torch.float32).to(device)
@@ -158,16 +153,29 @@ class DQNAgent:
             # self.replay_memory.memory = self.replay_memory.memory[]
 
     def train(self, episodes):
-        step_counter = 0
+
+        "Fill the buffer with random exploration"
+        done = False
+        state = env.reset()
+        while len(self.replay_memory) < self.buffer_size:
+            if not done:
+                action = self.choose_action(state)
+                next_state, reward, done, _ = env.step(action)
+                self.remember(state, action, reward, next_state, done)
+                state = next_state
+            else:
+                done = False
+                state = env.reset()
+
+        "Training Loop"
         for episode in range(episodes):
 
             percent_completion = (episode + 1) / episodes
 
             state = env.reset()
-            # state = env.reset()
             done = False
 
-            # Epsilon annealing - exponential decay
+            "Epsilon annealing - exponential decay"
             if self.epsilon > self.epsilon_min:
                 # self.epsilon -= self.epsilon_decay
                 self.epsilon = math.exp(-2 * math.pow(percent_completion, 3.5) / 0.4)
@@ -175,8 +183,19 @@ class DQNAgent:
             episode_reward = 0
             greedy_episode_reward = 0
 
-            "Greedy Evaluation Episodes"
+            "Greedy Evaluation + Target network soft-update"
             if episode % self.greedy_interval == 0:
+                "Soft update of the target network's weights"
+                # θ′ ← τ θ + (1 −τ )θ′
+                target_net_state_dict = self.target_net.state_dict()
+                policy_net_state_dict = self.policy_net.state_dict()
+                for key in policy_net_state_dict:
+                    target_net_state_dict[key] = policy_net_state_dict[key] * self.tau + target_net_state_dict[key] * (
+                            1 - self.tau)
+                self.target_net.load_state_dict(target_net_state_dict)
+
+                "Greedy evaluation"
+                state = env.reset()
                 while not done:
                     action = self.choose_greedy_action(state)
 
@@ -186,14 +205,13 @@ class DQNAgent:
                     state = next_state
 
                 wandb.log({'Evaluation reward': greedy_episode_reward})
-                print("Episode: {}/{}, Eval. Reward: {}, Epsilon: {:.2f}, Learning Rate: {}".format(episode + 1, episodes,
-                                                                                              greedy_episode_reward,
-                                                                                              self.epsilon,
-                                                                                              self.learning_rate))
-            "Target network update"
-            if episode % self.target_update_freq == 0:
-                self.target_net.load_state_dict(self.policy_net.state_dict())
-
+                print(
+                    "Episode: {}/{}, Eval. Reward: {}, Epsilon: {:.2f}, Learning Rate: {}".format(episode + 1, episodes,
+                                                                                                  greedy_episode_reward,
+                                                                                                  self.epsilon,
+                                                                                                  self.learning_rate))
+            state = env.reset()
+            "Policy net optimization"
             while not done:
                 action = self.choose_action(state)
 
@@ -203,58 +221,46 @@ class DQNAgent:
 
                 episode_reward += reward
                 state = next_state
-
-                if step_counter % 50 == 0:
-                    self.replay(percent_completion)
-                    # Soft update of the target network's weights
-                    # θ′ ← τ θ + (1 −τ )θ′
-                    target_net_state_dict = self.target_net.state_dict()
-                    policy_net_state_dict = self.policy_net.state_dict()
-                    for key in policy_net_state_dict:
-                        target_net_state_dict[key] = policy_net_state_dict[key] * self.tau + target_net_state_dict[key] * (
-                                    1 - self.tau)
-                    self.target_net.load_state_dict(target_net_state_dict)
-                step_counter += 1
+                self.replay(percent_completion)
 
             wandb.log({'Reward': episode_reward, 'Epsilon': self.epsilon, \
                        'Learning rate': self.learning_rate})
 
             self.total_reward_per_param += episode_reward
-
         return self.total_reward_per_param
 
-# def train_params(config):
+def train_params(config):
+    state_size = 2
+    action_size = env.nA
+    batch_size = 512
+    buffer_size = 10000
+    num_episodes = 20000
+    alpha = config.alpha
+    discount_rate = 0.98
+    greedy_interval = 500
+    epsilon_start = 0.9
+    epsilon_decay = epsilon_start / num_episodes
+    hidden_dim = 64
 
-state_size = 2
-action_size = env.nA
-batch_size = 512
-buffer_size = 4096
-num_episodes = 40000
-alpha = 1e-4
-discount_rate = 0.998
-greedy_interval = 500
-target_update_freq = 50
-epsilon_start = 0.9
-epsilon_decay = epsilon_start / num_episodes
-hidden_dim = 32
+    agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate, \
+                     epsilon_start, epsilon_decay, buffer_size, batch_size, greedy_interval)
 
-agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate, \
-             epsilon_start, epsilon_decay, buffer_size, batch_size, greedy_interval, target_update_freq)
+    total_reward_per_param = agent.train(num_episodes)
 
-total_reward_per_param = agent.train(num_episodes)
+    return total_reward_per_param
 
-# def main():
-#     wandb.init(project="Sweep-DQN-King-Windy-GW-2x32", mode="disabled")
-#     total_reward_per_param = train_params(wandb.config)
-#     wandb.log({'Total Reward per param': total_reward_per_param})
-#
-# sweep_configuration = {
-#     "method": "random",
-#     "metric": {"goal": "maximize", "name": "total_reward_per_param"},
-#     "parameters": {
-#         "alpha": {"values": [1e-3, 7e-4, 3e-4, 1e-4, 7e-5, 3e-5]}}}
-#
-# sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-King-Windy-GW-2x32")
-#
-# wandb.agent(sweep_id, function = main, count=6)
+def main():
+    wandb.init(project="Sweep-DQN-King-Windy-GW-2x32")#, mode = "disabled")
+    total_reward_per_param = train_params(wandb.config)
+    wandb.log({'Total Reward per param': total_reward_per_param})
+
+sweep_configuration = {
+    "method": "random",
+    "metric": {"goal": "maximize", "name": "total_reward_per_param"},
+    "parameters": {
+        "alpha": {"values": [1e-3, 7e-4, 3e-4, 1e-4, 7e-5]}}}
+
+sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-King-Windy-GW-2x32")
+
+wandb.agent(sweep_id, function = main, count=5)
 wandb.finish()

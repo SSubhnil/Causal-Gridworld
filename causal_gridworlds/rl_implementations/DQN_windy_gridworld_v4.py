@@ -160,7 +160,6 @@ class DQNAgent:
             # self.replay_memory.memory = self.replay_memory.memory[]
 
     def train(self, episodes):
-        step_counter = 0
         for episode in range(episodes):
 
             percent_completion = (episode + 1) / episodes
@@ -202,7 +201,7 @@ class DQNAgent:
                                                                                               self.epsilon,
                                                                                               self.learning_rate))
 
-            if len(self.replay_memory) <= self.buffer_size:
+            if len(self.replay_memory) < self.buffer_size - 10:
                 episode -= 1
 
             while not done:
@@ -215,8 +214,6 @@ class DQNAgent:
                 episode_reward += reward
                 state = next_state
                 self.replay(percent_completion)
-
-                step_counter += 1
 
             wandb.log({'Reward': episode_reward, 'Epsilon': self.epsilon, \
                        'Learning rate': self.learning_rate})
