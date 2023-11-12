@@ -250,17 +250,25 @@ def train_params(config):
     return total_reward_per_param
 
 def main():
-    wandb.init(project="Sweep-DQN-King-Windy-GW-2x32")#, mode = "disabled")
+    wandb.init(project="Sweep-DQN-King-Windy-GW-2x64", mode = "offline")
     total_reward_per_param = train_params(wandb.config)
     wandb.log({'Total Reward per param': total_reward_per_param})
 
 sweep_configuration = {
-    "method": "random",
+    "method": "bayes",
     "metric": {"goal": "maximize", "name": "total_reward_per_param"},
     "parameters": {
-        "alpha": {"values": [1e-3, 7e-4, 3e-4, 1e-4, 7e-5]}}}
+        "alpha": {"max": 1e-3, "min": 1e-5},
+        "batch_size": {'values': [128, 256, 512]}}}
 
-sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-King-Windy-GW-2x32")
+sweep_id = "sssubhnil/Sweep-DQN-King-Windy-GW-2x64/k7wblnhk"#wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-King-Windy-GW-2x64")
 
-wandb.agent(sweep_id, function = main, count=5)
+wandb.agent(sweep_id, function = main, count=10)
 wandb.finish()
+
+# import wandb
+# api = wandb.Api()
+#
+# run = api.run("sssubhnil/Sweep-DQN-King-Windy-GW-2x64/<run_id>")
+# run.config["key"] = updated_value
+# run.update()
