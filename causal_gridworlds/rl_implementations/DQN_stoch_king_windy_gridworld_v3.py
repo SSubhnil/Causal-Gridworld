@@ -6,12 +6,6 @@ Created on Thu Oct 19 14:13:10 2023
 @details: DQN for Stochastic King-actions Windy Gridworld_v3. With wandb sweep.
 """
 import math
-import random
-import matplotlib
-import matplotlib.pyplot as plt
-from collections import namedtuple, deque
-from itertools import count
-import numpy as np
 
 import random
 import numpy as np
@@ -24,9 +18,6 @@ import os
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 os.chdir('..')
 
-from util.util import PlotUtil
-from util.util import RepresentationTools as rpt
-from util.wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
 from envs.stoch_king_windy_gridworld_env import StochKingWindyGridWorldEnv
 
 import wandb
@@ -40,32 +31,25 @@ print("Using device:", device)
 
 num_gpus = torch.cuda.device_count()
 print(f"Number of available GPUs: {num_gpus}")
-
-is_ipython = 'inline' in matplotlib.get_backend()
-if is_ipython:
-    from IPython import display
     
 grid_dimensions = (env.grid_height, env.grid_width)
 
 # Define the DQN class
 class DQN(nn.Module):
-    def __init__(self, state_size, action_size, hidden_size):
+    def __init__(self, state_size, action_size, hidden_dim):
         super(DQN, self).__init__()
-        self.state_size = state_size
-        self.action_size = action_size
-        self.hidden_size = hidden_size
-        self.fci = nn.Linear(state_size, hidden_size)
-        self.fc1 = nn.Linear(hidden_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        # self.fc3 = nn.Linear(hidden_dim, hidden_dim)
-        # self.fc4 = nn.Linear(hidden_dim, hidden_dim)
-        self.fcf = nn.Linear(hidden_size, action_size)
+        self.fci = nn.Linear(state_size, hidden_dim)
+        self.fc1 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        # self.fc34 = nn.Linear(hidden_dim, hidden_dim)
+        self.fcf = nn.Linear(hidden_dim, action_size)
 
     def forward(self, x):
-        x = F.relu(self.fci(x))
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.tanh(self.fcf(x))
+        x = torch.relu(self.fci(x))
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        # x = torch.tanh(self.fc3(x))
+        x = torch.tanh(self.fcf(x))
         return x
 
 class ReplayMemory:
@@ -85,21 +69,16 @@ class ReplayMemory:
     def sample(self, batch_size):
         batch = random.sample(self.memory, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
-        return (
-            torch.cat(states).to(device),
-            torch.tensor(actions).to(device),
-            torch.tensor(rewards).to(device),
-            torch.cat(next_states).to(device),
-            torch.tensor(dones).to(device)
-        )
-    
+        return states, actions, rewards, next_states, dones
+
     def unpack(self):
         batch = self.memory
         states, actions, rewards, next_states, dones = zip(*batch)
+
         return (
             torch.cat(states).to(device),
             torch.tensor(actions).to(device),
-            torch.tensor(np.mean(rewards)/(np.std(rewards)+1e-5)).to(device),
+            torch.tensor(np.mean(rewards) / (np.std(rewards) + 1e-5)).to(device),
             torch.cat(next_states).to(device),
             torch.tensor(dones).to(device)
         )
@@ -108,7 +87,8 @@ class ReplayMemory:
         return len(self.memory)
 
 class DQNAgent:
-    def __init__(self, state_size, action_size, hidden_dim, learning_rate, discount_rate, epsilon, epsilon_decay, buffer_size, batch_size):
+    def __init__(self, state_size, action_size, hidden_dim, learning_rate, discount_rate, epsilon, epsilon_decay,
+                 buffer_size, batch_size, greedy_interval, TAU = 0.005):
         self.state_size = state_size
         self.action_size = action_size
         self.hidden_dim = hidden_dim
@@ -116,140 +96,169 @@ class DQNAgent:
         self.discount_rate = discount_rate
         self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
-        self.buffer_size = buffer_size
         self.epsilon_min = 0.01
-        self.final_lr = 1e-6
-        self.replay_memory = ReplayMemory(self.buffer_size)
+        self.final_lr = 1e-5
+        self.buffer_size = buffer_size
         self.batch_size = batch_size
-        self.model = DQN(state_size, action_size, hidden_dim).to(device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        self.replay_memory = ReplayMemory(buffer_size)
+        self.policy_net = DQN(state_size, action_size, hidden_dim).to(device)
+        self.target_net = DQN(state_size, action_size, hidden_dim).to(device)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=learning_rate)
         self.loss = nn.MSELoss()
-        self.Q_table = np.empty((env.grid_height, env.grid_width, env.nA))
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.eval()
+        self.total_reward_per_param = 0
+        self.greedy_interval = greedy_interval
+        self.tau = TAU
+
+    def choose_greedy_action(self, state):
+        state = torch.tensor(state, dtype=torch.float32).to(device)
+        q_values = self.policy_net(state)
+        return torch.argmax(q_values).item()
 
     def choose_action(self, state):
         if np.random.rand() <= self.epsilon:
             return random.randrange(self.action_size)
         else:
             state = torch.tensor(state, dtype=torch.float32).to(device)
-            q_values = self.model(state)
+            q_values = self.policy_net(state)
             return torch.argmax(q_values).item()
 
     def remember(self, state, action, reward, next_state, done):
-        state = torch.tensor(np.array(state).reshape(1, -1), dtype=torch.float32).to(device)
-        next_state = torch.tensor(np.array(next_state).reshape(1, -1), dtype=torch.float32).to(device)
         self.replay_memory.push(state, action, reward, next_state, done)
 
-    def replay(self, state, action, reward, next_state, done):
-        self.remember(state, action, reward, next_state, done)
-        if len(self.replay_memory) == self.buffer_size:
-            for i in range(int(self.buffer_size/self.batch_size)):
-        
-                random.shuffle(self.replay_memory.memory)
-                states, actions, rewards, next_states, dones = self.replay_memory.sample(self.batch_size)
-                
-        
-                current_q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1).to(device)
-                next_q_values = self.model(next_states).max(1)[0].detach()
-                target_q_values = rewards + self.discount_rate * next_q_values * (1 - dones.float()).to(device)
-                
-                loss = self.loss(current_q_values, target_q_values)
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-            self.replay_memory.memory.clear()
+    def replay(self, percent_completion):
+        if len(self.replay_memory) > self.batch_size:
 
-    def train(self, env, episodes):
-        # Initialize the greedy evaluation
-        total_reward_per_param = 0
-        
-        # lr_decay = (self.learning_rate - self.final_lr) / episodes
+            states, actions, rewards, next_states, dones = self.replay_memory.sample(self.batch_size)
+
+            states = torch.FloatTensor(states).to(device)
+            next_states = torch.FloatTensor(next_states).to(device)
+            actions = torch.FloatTensor(actions).to(device=device, dtype=int)
+            rewards = torch.FloatTensor(rewards).to(device)  #
+            dones = torch.FloatTensor(dones).to(device)  # shape = [512]
+
+            current_q_values = (self.policy_net(states).gather(1, actions.unsqueeze(1)).squeeze(1)).to(device)
+            next_q_values = self.target_net(next_states).max(1)[0].detach()
+            target_q_values = (rewards + (self.discount_rate * next_q_values * (1 - dones.float()))).to(device)
+
+            loss = self.loss(current_q_values, target_q_values)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            # self.replay_memory.memory = self.replay_memory.memory[]
+
+    def train(self, episodes):
+
+        "Fill the buffer with random exploration"
+        done = False
+        state = env.reset()
+        while len(self.replay_memory) < self.buffer_size:
+            if not done:
+                action = self.choose_action(state)
+                next_state, reward, done = env.step(action)
+                self.remember(state, action, reward, next_state, done)
+                state = next_state
+            else:
+                done = False
+                state = env.reset()
+
+        "Training Loop"
         for episode in range(episodes):
+
+            percent_completion = (episode + 1) / episodes
+
             state = env.reset()
-            percent_completion = (episode+1)/episodes
-            
             done = False
-            
-            # Epsilon annealing - exponential decay
+
+            "Epsilon annealing - exponential decay"
             if self.epsilon > self.epsilon_min:
                 # self.epsilon -= self.epsilon_decay
-                self.epsilon = math.exp(-2*math.pow(percent_completion,3.5)/0.4)
-            
+                self.epsilon = math.exp(-2 * math.pow(percent_completion, 3.5) / 0.4)
+
             episode_reward = 0
+            greedy_episode_reward = 0
+
+            "Greedy Evaluation + Target network soft-update"
+            if episode % self.greedy_interval == 0:
+                "Soft update of the target network's weights"
+                # θ′ ← τ θ + (1 −τ )θ′
+                target_net_state_dict = self.target_net.state_dict()
+                policy_net_state_dict = self.policy_net.state_dict()
+                for key in policy_net_state_dict:
+                    target_net_state_dict[key] = policy_net_state_dict[key] * self.tau + target_net_state_dict[key] * (
+                            1 - self.tau)
+                self.target_net.load_state_dict(target_net_state_dict)
+
+                "Greedy evaluation"
+                state = env.reset()
+                while not done:
+                    action = self.choose_greedy_action(state)
+
+                    next_state, reward, done = env.step(action)
+
+                    greedy_episode_reward += reward
+                    state = next_state
+
+                wandb.log({'Evaluation reward': greedy_episode_reward})
+                print(
+                    "Episode: {}/{}, Eval. Reward: {}, Epsilon: {:.2f}, Learning Rate: {}".format(episode + 1, episodes,
+                                                                                                  greedy_episode_reward,
+                                                                                                  self.epsilon,
+                                                                                                  self.learning_rate))
+            state = env.reset()
+            "Policy net optimization"
             while not done:
                 action = self.choose_action(state)
-                
+
                 next_state, reward, done = env.step(action)
-                # next_state = enco.OneHotEncoder(next_state)
-                self.replay(state, action, reward, next_state, done)
+
+                self.remember(state, action, reward, next_state, done)
+
                 episode_reward += reward
                 state = next_state
-                
-            
-            total_reward_per_param += episode_reward
-            wandb.log({'Reward':episode_reward})
-            
-            if episode%500 == 0:
-                print("Episode: {}/{}, Reward: {}, Epsilon: {:.2f}, Learning Rate: {}".format(episode+1, episodes, episode_reward, self.epsilon, self.learning_rate))
-        
-        return total_reward_per_param
+                self.replay(percent_completion)
+
+            wandb.log({'Reward': episode_reward, 'Epsilon': self.epsilon, \
+                       'Learning rate': self.learning_rate})
+
+            self.total_reward_per_param += episode_reward
+        return self.total_reward_per_param
 
 def train_params(config):
     state_size = 2
     action_size = env.nA
     batch_size = config.batch_size
-    buffer_size = config.buffer_size
-    num_episodes = 60000
+    buffer_size = 10000
+    num_episodes = 20000
     alpha = config.alpha
     discount_rate = 0.98
-    epsilon_start = 1.0
-    epsilon_decay = epsilon_start/num_episodes
-    hidden_dim = 32
-    agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate,\
-                     epsilon_start, epsilon_decay, buffer_size, batch_size)
-    
-    total_reward_per_param = agent.train(env, num_episodes)
+    greedy_interval = 500
+    epsilon_start = 0.9
+    epsilon_decay = epsilon_start / num_episodes
+    hidden_dim = 128
+
+    agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate, \
+                     epsilon_start, epsilon_decay, buffer_size, batch_size, greedy_interval)
+
+    total_reward_per_param = agent.train(num_episodes)
+
     return total_reward_per_param
 
 def main():
-    wandb.init(project="Sweep-DQN-King-Stoch-Windy-GW-2x32")#, mode="disabled")
+    wandb.init(project="Sweep-DQN-Stoch-King-Windy-GW-2x128", mode = "offline")
     total_reward_per_param = train_params(wandb.config)
-    wandb.log({'Total_Reward':total_reward_per_param})
-    
+    wandb.log({'Total Reward per param': total_reward_per_param})
 
 sweep_configuration = {
-    "method": "random",
+    "method": "bayes",
     "metric": {"goal": "maximize", "name": "total_reward_per_param"},
-    "parameters":{
-        "alpha": {"values": [7e-4, 3e-4, 1e-4, 7e-5, 3e-5, 1e-5]},
-        "buffer_size": {"values": [512, 1024]},
-        "batch_size": {"values": [256, 512]}}}
+    "parameters": {
+        "alpha": {"distribution": "uniform", "max": 8e-4, "min": 1e-5},
+        "batch_size": {'distribution': 'categorical', 'values': [512, 1024]}}}
 
-sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-King-Stoch-Windy-GW-2x32")
+sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-Stoch-King-Windy-GW-2x128")
 
-wandb.agent(sweep_id, function = main, count=24)
+wandb.agent(sweep_id, function = main, count=8)
 wandb.finish()
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
