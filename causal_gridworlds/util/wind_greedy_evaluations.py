@@ -43,18 +43,13 @@ class GreedyEvaluation:
         self.num_episodes = 100
         self.Q_store = np.empty((self.num_episodes, self.env.grid_height, self.env.grid_width, self.env.nA))
 
-    def epsilon_greedy(self, Q, state, nA, eps = 0.01):
-        #print("greedy_function_Q \n", Q)
-        if np.random.uniform(0, 1) > eps:
-            return np.argmax(Q[state[0]][state[1]])
-        else:
-            return random.choice(np.arange(nA))
+    def epsilon_greedy(self, Q, state):
+        return np.argmax(Q[state[0]][state[1]])
     
     
-    def Q_learn(self, Q, alpha, gamma=1.0):
+    def Q_learn(self, Q, gamma=1.0):
         # Initialize action-value function (empty dictionary of arrays)
         nA = self.env.nA
-        # Q = defaultdict(lambda: np.zeros(nA))
         
         step_count = np.empty((self.num_episodes, 1))
         wind_profile = np.empty((self.num_episodes, self.env.grid_width))
@@ -76,7 +71,7 @@ class GreedyEvaluation:
                 count+=1
                 
                 # Choose action A_0 using policy derived from Q (e.g., eps-greedy)
-                action = self.epsilon_greedy(Q, state, nA)
+                action = self.epsilon_greedy(Q, state)
                 
                 next_state, reward, done, info = self.env.step(action)  # take action A, observe R', S'
                 score += reward  # add reward to agent's score
@@ -95,10 +90,10 @@ class GreedyEvaluation:
         return step_count, wind_profile
     
     
-    def run_algo(self, ALPHA, Q):
-        step_count, wind_profile = self.Q_learn(Q, ALPHA)
+    def run_algo(self, Q):
+        step_count, wind_profile = self.Q_learn(Q)
         return step_count, np.mean(step_count), wind_profile
-    
+
 class DQN_GreedyEvaluation:
     def __init__(self, ENV, GRID_DIMENSIONS, device):
         self.env = ENV
