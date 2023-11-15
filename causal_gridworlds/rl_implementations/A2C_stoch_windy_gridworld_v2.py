@@ -212,6 +212,7 @@ def train_params(config):
             next_state, reward, done = env.step(action)
             agent.train(state, action, reward, next_state, done)
             episode_reward += reward
+            state = next_state
         
         try:
             wandb.log({'Reward':episode_reward})

@@ -202,7 +202,7 @@ if __name__ == "__main__":
     current_lr_actor = learning_rate_actor
     current_lr_critic = learning_rate_critic
     batch_size = 512
-    buffer_size = 1024
+    buffer_size = 10000
     entropy_weight = 1.0 # Low:[<0.001]; Moderate:[0.01, 0.1]; High:[>1.0]
     
     greedy_evaluation = evaluate(env, grid_dimensions, device)
@@ -234,7 +234,8 @@ if __name__ == "__main__":
             action = agent.select_action(state)
             next_state, reward, done, _ = env.step(action)
             agent.train(state, action, reward, next_state, done)
-            episode_reward += reward        
+            episode_reward += reward
+            state = next_state
         
         if episode % 500 == 0:
             print("Episode: {}/{}, Reward: {}".format(episode+1, num_episodes, episode_reward))

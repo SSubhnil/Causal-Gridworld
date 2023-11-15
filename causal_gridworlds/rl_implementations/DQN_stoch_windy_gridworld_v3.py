@@ -15,6 +15,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import threading
+import queue
 
 from custom_envs.stoch_windy_gridworld_env_v3 import StochWindyGridWorldEnv_V3
 import gym
@@ -32,8 +34,6 @@ num_gpus = torch.cuda.device_count()
 print(f"Number of available GPUs: {num_gpus}")
 
 is_ipython = 'inline' in matplotlib.get_backend()
-if is_ipython:
-    from IPython import display
 
 # grid_dimensions = (env.grid_height, env.grid_width)
 
@@ -160,7 +160,7 @@ class DQNAgent:
         while len(self.replay_memory) < self.buffer_size:
             if not done:
                 action = self.choose_action(state)
-                next_state, reward, done, _ = env.step(action)
+                next_state, reward, done = env.step(action)
                 self.remember(state, action, reward, next_state, done)
                 state = next_state
             else:
@@ -199,7 +199,7 @@ class DQNAgent:
                 while not done:
                     action = self.choose_greedy_action(state)
 
-                    next_state, reward, done, _ = env.step(action)
+                    next_state, reward, done = env.step(action)
 
                     greedy_episode_reward += reward
                     state = next_state
@@ -215,7 +215,7 @@ class DQNAgent:
             while not done:
                 action = self.choose_action(state)
 
-                next_state, reward, done, _ = env.step(action)
+                next_state, reward, done = env.step(action)
 
                 self.remember(state, action, reward, next_state, done)
 
@@ -250,20 +250,20 @@ def train_params(config):
     return total_reward_per_param
 
 def main():
-    wandb.init(project="Sweep-DQN-Stoch-Windy-GW-2x64", mode = "offline")
+    wandb.init(project="Sweep-DQN-Stoch-Windy-GW-2x64", mode = "online")
     total_reward_per_param = train_params(wandb.config)
     wandb.log({'Total Reward per param': total_reward_per_param})
 
 sweep_configuration = {
-    "method": "bayes",
+    "method": "grid",
     "metric": {"goal": "maximize", "name": "total_reward_per_param"},
     "parameters": {
-        "alpha": {"max": 8e-4, "min": 1e-5},
-        "batch_size": {'distribution': 'categorical', 'values': [512, 1024]}}}
+        "alpha": {"values": [1e-5, 3e-5, 7e-5, 1e-4, 4e-4]},
+        "batch_size": {'values': [512, 1024]}}}
 
 sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-Stoch-Windy-GW-2x64")
 
-wandb.agent(sweep_id, function = main, count=12)
+wandb.agent(sweep_id, function = main, count=10)
 wandb.finish()
 
 

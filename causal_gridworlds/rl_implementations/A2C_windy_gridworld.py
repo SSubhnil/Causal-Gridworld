@@ -232,7 +232,8 @@ if __name__ == "__main__":
             action = agent.select_action(state)
             next_state, reward, done, _ = env.step(action)
             agent.train(state, action, reward, next_state, done)
-            episode_reward += reward        
+            episode_reward += reward
+            state = next_state
         
         if episode % 500 == 0:
             print("Episode: {}/{}, Reward: {}".format(episode+1, num_episodes, episode_reward))

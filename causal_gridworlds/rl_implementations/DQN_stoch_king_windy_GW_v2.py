@@ -1,38 +1,32 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jun 15 15:54:04 2023
+Created on Tue Nov 14 10:45:10 2023
 
 @author: SSubhnil
-@details: DQN for Stochastic Windy Gridworld_v1
+@details: DQN for Stochastic King-actions Windy Gridworld_v2. With fixed hyperparameters.
 """
 import math
-import random
-import matplotlib
-import matplotlib.pyplot as plt
-from collections import namedtuple, deque
-from itertools import count
-import numpy as np
 
 import random
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 
 import os
+
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 os.chdir('..')
 
-from custom_envs.stoch_windy_gridworld_env_v3 import StochWindyGridWorldEnv_V3
+from custom_envs.stoch_king_windy_gridworld_env import StochKingWindyGridWorldEnv
 
 import wandb
+
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-wandb.init(project="DQN-Stoch-Windy-GW")
 
+env = StochKingWindyGridWorldEnv()
 
-env = StochWindyGridWorldEnv_V3()
-
-np.random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # device = torch.device("cpu")
 print("Using device:", device)
@@ -40,9 +34,8 @@ print("Using device:", device)
 num_gpus = torch.cuda.device_count()
 print(f"Number of available GPUs: {num_gpus}")
 
-is_ipython = 'inline' in matplotlib.get_backend()
+grid_dimensions = (env.grid_height, env.grid_width)
 
-# grid_dimensions = (env.grid_height, env.grid_width)
 
 # Define the DQN class
 class DQN(nn.Module):
@@ -61,6 +54,7 @@ class DQN(nn.Module):
         # x = torch.tanh(self.fc3(x))
         x = torch.tanh(self.fcf(x))
         return x
+
 
 class ReplayMemory:
     def __init__(self, capacity):
@@ -96,9 +90,10 @@ class ReplayMemory:
     def __len__(self):
         return len(self.memory)
 
+
 class DQNAgent:
     def __init__(self, state_size, action_size, hidden_dim, learning_rate, discount_rate, epsilon, epsilon_decay,
-                 buffer_size, batch_size, greedy_interval, TAU = 0.005):
+                 buffer_size, batch_size, greedy_interval, TAU=0.005):
         self.state_size = state_size
         self.action_size = action_size
         self.hidden_dim = hidden_dim
@@ -139,7 +134,6 @@ class DQNAgent:
 
     def replay(self, percent_completion):
         if len(self.replay_memory) > self.batch_size:
-
             states, actions, rewards, next_states, dones = self.replay_memory.sample(self.batch_size)
 
             states = torch.FloatTensor(states).to(device)
@@ -237,33 +231,40 @@ class DQNAgent:
         return self.total_reward_per_param
 
 
-state_size = 2
-action_size = env.nA
-batch_size = config.batch_size
-buffer_size = 10000
-num_episodes = 20000
-alpha = config.alpha
-discount_rate = 0.98
-greedy_interval = 500
-epsilon_start = 0.9
-epsilon_decay = epsilon_start / num_episodes
-hidden_dim = 64
+def train_params(config):
+    state_size = 2
+    action_size = env.nA
+    batch_size = config.batch_size
+    buffer_size = 10000
+    num_episodes = 50000
+    alpha = 1e-4
+    discount_rate = 0.98
+    greedy_interval = 500
+    epsilon_start = 0.9
+    epsilon_decay = epsilon_start / num_episodes
+    hidden_dim = 128
 
-agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate, \
-                 epsilon_start, epsilon_decay, buffer_size, batch_size, greedy_interval)
+    agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate, \
+                     epsilon_start, epsilon_decay, buffer_size, batch_size, greedy_interval)
 
-total_reward_per_param = agent.train(num_episodes)
+    total_reward_per_param = agent.train(num_episodes)
 
+    return total_reward_per_param
+
+
+def main():
+    wandb.init(project="DQN-Stoch-King-Windy-GW-2x128", mode="offline")
+    total_reward_per_param = train_params(wandb.config)
+    wandb.log({'Total Reward per param': total_reward_per_param})
 
 
 sweep_configuration = {
-    "method": "bayes",
+    "method": "grid",
     "metric": {"goal": "maximize", "name": "total_reward_per_param"},
     "parameters": {
-        "alpha": {"distribution": "uniform", "max": 8e-4, "min": 1e-5},
-        "batch_size": {'distribution': 'categorical', 'values': [512, 1024]}}}
+        "batch_size": {'values': [512, 1024]}}}
 
-sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-Stoch-Windy-GW-2x128")
+sweep_id = wandb.sweep(sweep=sweep_configuration, project="DQN-Stoch-King-Windy-GW-2x128")
 
-wandb.agent(sweep_id, function = main, count=8)
+wandb.agent(sweep_id, function=main, count=2)
 wandb.finish()

@@ -229,7 +229,7 @@ if __name__ == "__main__":
             next_state, reward, done = env.step(action)
             agent.train(state, action, reward, next_state, done)
             episode_reward += reward
-        
+            state = next_state
         
         wandb.log({'Reward':episode_reward})
         
@@ -246,65 +246,4 @@ if __name__ == "__main__":
         # current_lr_actor = current_lr_actor - lr_decay
     
     wandb.finish()
-    
-    def moving_average(step_count, n = 300):
-        running_average = np.cumsum(step_count, dtype=float)
-        running_average[n:] = running_average[n:] - running_average[:-n]
-        return running_average[n - 1:] / n
-        
-    running_average = moving_average(step_count)
-
-    experiment_number = 4
-    #%%
-    # np.save("A2C-GW-Step_count-greedy_eval_h{}_{}.npy".format(hidden_dim, experiment_number), step_count)
-    # np.save("A2C-GW-Greedy_Step_count-greedy_eval_h{}_{}.npy".format(hidden_dim, experiment_number), avg_greedy_step_count)
-        
-    #avg_step_count = np.average(mega_step_count, axis=0)
-    spacer1 = np.arange(1, len(running_average)+1)
-    spacer2 = np.arange(1, num_episodes, greedy_interval)
-
-    print("\n 0: Up, 1: Right, 2: Down, 3: Left")
-    print("\n Minimum: Steps:", min(step_count))
-
-    #%%
-    # Plotting Running Average
-    fig, ax1 = plt.subplots()
-
-    color = 'tab:red'
-    ax1.set_xlabel('Episodes')
-    ax1.set_ylabel('Running Average (steps/episode)', color=color)
-    ax1.plot(spacer1, running_average, color=color, label="Running Avg.")
-    ax1.tick_params(axis='y', labelcolor=color)
-
-    ax2 = ax1.twinx()
-
-    color = 'tab:blue'
-    ax2.set_ylabel('Greedy Evaluations (steps/batch)', color=color)
-    ax2.plot(spacer2, avg_greedy_step_count, color=color, label="Greedy Eval.")
-    for x,y in zip(spacer2, avg_greedy_step_count):
-        ax2.annotate('%s' % y, xy=(x,y), textcoords = 'data')
-    ax2.tick_params(axis='y', labelcolor=color)
-
-    # plt.xlabel('Episodes')
-    # plt.ylabel('Running Average (steps/episode)')
-    # plt.legend('Min_step', min(step_count))
-    plt.title('A2C-4A-Stoch-GW alp=%f' % learning_rate_actor)
-    plt.legend(loc="upper right")
-    plt.savefig('A2C-4A-Stoch-GW-h{}_{}.png'.format(hidden_dim, experiment_number), dpi=600)
-    
-    # run.log({"A2C-Vanilla-GW-h{}".format(hidden_dim):fig})
-
-    #%%
-    plt.figure()
-    plt.title("Greedy Evaluation Batches")
-    plt.xlabel("Greedy Episodes")
-    plt.ylabel("Greedy Steps")
-    for k in range(0, np.shape(greedy_step_count)[0]):
-        running_avg_greedy_step_count = moving_average(greedy_step_count[k,:,0], n = 15)
-        spacer3 = np.arange(0, len(running_avg_greedy_step_count))
-        plt.plot(spacer3, running_avg_greedy_step_count, label = "Batch={}".format(k))
-    plt.legend()
-    plt.savefig("A2C-4A-Stoch-GW-greedy_episodes_h{}_{}.png".format(hidden_dim, experiment_number), dpi = 600)
-    
-    
 
