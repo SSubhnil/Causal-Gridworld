@@ -113,7 +113,6 @@ def Q_learn(env, num_episodes, alpha, epsilon, greedy_interval, gamma=1.0):
 
     return total_reward_per_param
 
-# Use one hyper-param
 def train_params(config):
     alpha = config.alpha
     num_episodes = 30000

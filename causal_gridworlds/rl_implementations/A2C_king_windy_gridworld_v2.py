@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Oct 13 15:17:31 2023
+Created on Thu Nov 16 12:28:24 2023
 
-@author: shubh
-@details: A hyperparameter sweep code for A2C Windy GridWorld
+@author: SSubhnil
+@details: Advantage actor-critic for the King-action Gridworld environment. WandB Sweeps.
 """
 
 import torch
@@ -12,26 +12,27 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 
+import math
 import random
-
 from collections import namedtuple, deque
+from itertools import count
 
 import os
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 os.chdir('..')
 
-from custom_envs.windy_gridworld_env import WindyGridWorldEnv
+from custom_envs.king_windy_gridworld_env import KingWindyGridWorldEnv
 
-env = WindyGridWorldEnv()
+env = KingWindyGridWorldEnv()
 np.random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("using device:", device)
 
+
 import wandb
 
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-wandb.init(project="A2C-4A-Windy-GW", mode="offline")
 
 grid_dimensions = (env.grid_height, env.grid_width)
 
@@ -106,8 +107,6 @@ class A2C:
                  gamma=0.98, update_frequency=50):
         self.actor = Actor(state_dim, action_dim, hidden_dim).to(device)
         self.critic = Critic(state_dim, hidden_dim).to(device)
-        self.current_lr_actor = lr_actor
-        self.current_lr_critic = lr_critic
         self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=lr_actor)
         self.optimizer_critic = optim.Adam(self.critic.parameters(), lr=lr_critic)
         self.gamma = gamma
@@ -138,7 +137,7 @@ class A2C:
 
             states = torch.FloatTensor(states).to(device)
             next_states = torch.FloatTensor(next_states).to(device)
-            actions = torch.FloatTensor(actions).to(device)  # added unsqueeze after removing view(-1, 1) from actor_loss
+            actions = torch.FloatTensor(actions).to(device)
             rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device)  #
             dones = torch.FloatTensor(dones).unsqueeze(1).to(device)  # shape = [512]
 
@@ -166,74 +165,117 @@ class A2C:
 
             # Train network on total_loss instead of actor_loss
             self.optimizer_actor.zero_grad()
-            self.optimizer_critic.zero_grad()
             total_loss.backward()
             self.optimizer_actor.step()
+            self.optimizer_critic.zero_grad()
             critic_loss.backward()
             self.optimizer_critic.step()
+
             self.steps_since_update = 0
 
         self.steps_since_update += 1
 
 
-state_dim = 2
-action_dim = env.nA
-hidden_dim = 64
-num_episodes = 20000
-learning_rate_actor = 3e-4
-learning_rate_critic = 7e-4
-batch_size = 256
-buffer_size = 10000
-entropy_weight = 0.1  # Low:[<0.001]; Moderate:[0.01, 0.1]; High:[>1.0]
-total_reward_per_param = 0
+# Example usage;
+def train_params(config):
+    # Define environment dimensions and action space
+    state_dim = 2
+    action_dim = env.nA
+    hidden_dim = 64
+    num_episodes = 25000
+    greedy_interval = 1000
+    learning_rate_actor = config.lr_actor
+    learning_rate_critic = 1e-3
+    lr_actor_final = 1e-5
+    lr_decay = abs(learning_rate_actor - lr_actor_final) / num_episodes
+    current_lr_actor = learning_rate_actor
+    current_lr_critic = learning_rate_critic
+    batch_size = config.batch_size
+    buffer_size = 4096
+    greedy_eval_episodes = 20
+    entropy_weight = 0.1
+    total_reward_per_param = 0
 
-# Create the A2C agent
-agent = A2C(state_dim, action_dim, hidden_dim, learning_rate_actor, learning_rate_critic, buffer_size, batch_size,
-            entropy_weight)
+    # Create teh A2C agent
+    agent = A2C(state_dim, action_dim, hidden_dim, learning_rate_actor, learning_rate_critic, buffer_size, batch_size, entropy_weight)
 
-# wandb.watch(agent.actor, log='gradients', log_freq = 500, idx = 1, log_graph = True)
-# wandb.watch(agent.critic, log='gradients', log_freq = 500, idx = 2, log_graph = True)
+    # wandb.watch(agent.actor, log='gradients', log_freq=500, idx=1, log_graph=True)
+    # wandb.watch(agent.critic, log='gradients', log_freq=500, idx=2, log_graph=True)
 
-# Training loop (replace this with environment and data)
-
-"Fill the buffer with random exploration"
-done = False
-state = env.reset()
-while len(agent.replay_buffer.buffer) < buffer_size:
-    if not done:
-        action = agent.select_action(state)
-        next_state, reward, done, _ = env.step(action)
-        agent.train(state, action, reward, next_state, done)
-        state = next_state
-    else:
-        done = False
-        state = env.reset()
-
-for episode in range(num_episodes):
-    # Greedy evaluation
-    # if episode+1 % greedy_interval == 0:
-    #     greedy_step_count[sampling_counter], avg_greedy_step_count[sampling_counter]\
-    #         = greedy_evaluation.run_algo(self.learning_rate, self.model)
-    #     sampling_counter += 1
-
-    state = env.reset()
-    # state = env.reset()
+    # Random interactions to fill the buffer
     done = False
+    state  = env.reset()
+    while len(agent.replay_buffer.buffer) < buffer_size:
+        if not done:
+            action = agent.select_action(state)
+            next_state, reward, done, _ = env.step(action)
+            agent.train(state, action, reward, next_state, done)
+            state = next_state
+        else:
+            done = False
+            state = env.reset()
 
-    episode_reward = 0
+    # Training loop (replace this with environment and data)
+    for episode in range(num_episodes):
 
-    while not done:
-        action = agent.select_action(state)
-        next_state, reward, done, _ = env.step(action)
-        agent.train(state, action, reward, next_state, done)
-        episode_reward += reward
-        state = next_state
+        "Greedy evaluation"
+        state = env.reset()
+        done = False
+        if episode+1 % greedy_interval == 0:
+            avg_greedy_reward = 0
+            for t in range(0, greedy_eval_episodes):
+                greedy_reward = 0
+                while not done:
+                    action = agent.select_action(state)
+                    next_state, reward, done, _ = env.step(action)
+                    state = next_state
+                    greedy_reward += reward
+                avg_greedy_reward += greedy_reward
+            wandb.log({"Avg. Greedy Reward": avg_greedy_reward})
 
-    if episode % 500 == 0:
-        print("Episode: {}/{}, Reward: {}".format(episode + 1, num_episodes, episode_reward))
+        percent_completion = (episode + 1) / num_episodes
 
-    wandb.log({'Reward': episode_reward})
+        state = env.reset()
+        # state = env.reset()
+        done = False
 
-    total_reward_per_param += episode_reward
+        episode_reward = 0
 
+        while not done:
+            action = agent.select_action(state)
+            next_state, reward, done, _ = env.step(action)
+            agent.train(state, action, reward, next_state, done)
+            episode_reward += reward
+            state = next_state
 
+        wandb.log({'Reward': episode_reward})
+
+        if episode % 500 == 0:
+            print("Episode: {}/{}, Reward: {}".format(episode + 1, num_episodes, episode_reward))
+
+        wandb.log({'Learning Rate': current_lr_actor})
+
+        "Learning Rate decay -> uncomment to implement"
+        # for param_group in agent.optimizer_actor.param_groups:
+        #     param_group['lr'] = current_lr_actor
+        # current_lr_actor = current_lr_actor - lr_decay
+        total_reward_per_param += episode_reward
+    return total_reward_per_param
+
+def main():
+    wandb.init(project="Sweep-A2C-King-Windy-GW", mode = "offline")
+    total_reward_per_param = train_params(wandb.config)
+    wandb.log({'Total Reward per param': total_reward_per_param})
+
+sweep_configuration = {
+    "method": "grid",
+    "metric": {"goal": "maximize", "name": "total_reward_per_param"},
+    "parameters": {
+        "lr_actor": {"values": [7e-5, 3e-5, 1e-5, 3e-4, 1e-4]},
+        "batch_size": {'values': [512, 256]}}}
+
+sweep_id =  wandb.sweep(sweep=sweep_configuration, project="Sweep-A2C-King-Windy-GW")
+
+wandb.agent(sweep_id, function = main, count=10)
+
+wandb.finish()

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 import numpy as np
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 import sys
 
 class KingWindyGridWorldEnv(gym.Env):
@@ -78,10 +78,10 @@ class KingWindyGridWorldEnv(gym.Env):
         self.step_counter += 1
         assert self.action_space.contains(action)
         self.observation = self.action_destination[self.observation][action]
-        if self.step_counter == 200:
+        if self.step_counter == 300:
             return self.observation, -1, True, {}
         if self.observation == self.goal_state:
-            return self.observation, 2, True, {}
+            return self.observation, 1, True, {}
         return self.observation, -0.5, False, {}
         
     def reset(self):

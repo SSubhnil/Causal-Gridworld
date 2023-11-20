@@ -32,8 +32,6 @@ num_gpus = torch.cuda.device_count()
 print(f"Number of available GPUs: {num_gpus}")
 
 is_ipython = 'inline' in matplotlib.get_backend()
-if is_ipython:
-    from IPython import display
 
 # grid_dimensions = (env.grid_height, env.grid_width)
 
@@ -255,10 +253,10 @@ def main():
     wandb.log({'Total Reward per param': total_reward_per_param})
 
 sweep_configuration = {
-    "method": "bayes",
+    "method": "grid",
     "metric": {"goal": "maximize", "name": "total_reward_per_param"},
     "parameters": {
-        "alpha": {"max": 1e-3, "min": 1e-5},
+        "alpha": {"values": [3e-4, 1e-4, 7e-5, 3e-5, 1e-5]},
         "batch_size": {'values': [128, 256, 512]}}}
 
 sweep_id = "sssubhnil/Sweep-DQN-King-Windy-GW-2x64/k7wblnhk"#wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-King-Windy-GW-2x64")

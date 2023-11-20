@@ -125,60 +125,56 @@ class A2C:
         
         # Check if the buffer is filled
         if len(self.replay_buffer.buffer) == self.buffer_size:
-            for i in range(int(self.buffer_size/self.batch_size)):
-            
-                # Sample a batch of experience from the replay buffer
-                states, actions, rewards, next_states, dones = self.replay_buffer.sample_batch(self.batch_size)
-                
-                states = torch.FloatTensor(states).to(device)
-                next_states = torch.FloatTensor(next_states).to(device)
-                actions = torch.FloatTensor(actions).unsqueeze(1).to(device) # added unsqueeze after removing view(-1, 1) from actor_loss
-                rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device) #
-                dones = torch.FloatTensor(dones).unsqueeze(1).to(device) #  shape = [512]
-                
-                #Calculate advantages
-                values = self.critic(states) # shape = [512, 1]
-                next_values = self.critic(next_states) # shape = [512, 1]
-                delta = rewards + (self.gamma * next_values * (1 - dones)) - values
-                advantage = delta.detach()
-                
-                # Actor loss
-                action_probs = self.actor(states)
-                actions = actions.view(-1, 1).long() # Convert actions into int64
-                log_probs = -torch.log(action_probs.gather(1, actions))
-                actor_loss = log_probs * advantage#.view(-1, 1)
-                actor_loss = actor_loss.mean()
+            # Sample a batch of experience from the replay buffer
+            states, actions, rewards, next_states, dones = self.replay_buffer.sample_batch(self.batch_size)
 
-                # Critic loss
-                critic_loss = delta.pow(2).mean()
-                
-                # Calculate policy entropy
-                entropy = -torch.sum(action_probs * torch.log(action_probs), dim=1).mean()
+            states = torch.FloatTensor(states).to(device)
+            next_states = torch.FloatTensor(next_states).to(device)
+            actions = torch.FloatTensor(actions).unsqueeze(1).to(device) # added unsqueeze after removing view(-1, 1) from actor_loss
+            rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device) #
+            dones = torch.FloatTensor(dones).unsqueeze(1).to(device) #  shape = [512]
 
-                # Introducing total_loss instead of just actor_loss
-                total_loss = actor_loss - self.entropy_weight * entropy
-                
-                # Train network on total_loss instead of actor_loss
-                self.optimizer_actor.zero_grad()
-                self.optimizer_critic.zero_grad()
-                total_loss.backward()
-                self.optimizer_actor.step()
-                critic_loss.backward()
-                self.optimizer_critic.step()
-    
+            #Calculate advantages
+            values = self.critic(states) # shape = [512, 1]
+            next_values = self.critic(next_states) # shape = [512, 1]
+            delta = rewards + (self.gamma * next_values * (1 - dones)) - values
+            advantage = delta.detach()
+
+            # Actor loss
+            action_probs = self.actor(states)
+            actions = actions.view(-1, 1).long() # Convert actions into int64
+            log_probs = -torch.log(action_probs.gather(1, actions))
+            actor_loss = log_probs * advantage#.view(-1, 1)
+            actor_loss = actor_loss.mean()
+
+            # Critic loss
+            critic_loss = delta.pow(2).mean()
+
+            # Calculate policy entropy
+            entropy = -torch.sum(action_probs * torch.log(action_probs), dim=1).mean()
+
+            # Introducing total_loss instead of just actor_loss
+            total_loss = actor_loss - self.entropy_weight * entropy
+
+            # Train network on total_loss instead of actor_loss
+            self.optimizer_actor.zero_grad()
+            self.optimizer_critic.zero_grad()
+            total_loss.backward()
+            self.optimizer_actor.step()
+            critic_loss.backward()
+            self.optimizer_critic.step()
+
             # Clear the replay buffer after updating
-            self.replay_buffer.buffer.clear()
-            
-
+            # self.replay_buffer.buffer.clear()
 
 def train_params(config):
     # Define environment dimensions and action space
     state_dim = 2
     action_dim = env.nA
     hidden_dim = 32
-    num_episodes = 25000
+    num_episodes = 20000
     learning_rate_actor = config.lr_actor
-    learning_rate_critic = 1e-3
+    learning_rate_critic = 7e-4
     batch_size = config.batch_size
     buffer_size = 10000
     entropy_weight = 0.1 # Low:[<0.001]; Moderate:[0.01, 0.1]; High:[>1.0]
@@ -191,6 +187,20 @@ def train_params(config):
     # wandb.watch(agent.critic, log='gradients', log_freq = 500, idx = 2, log_graph = True)
     
     # Training loop (replace this with environment and data)
+
+    "Fill the buffer with random exploration"
+    done = False
+    state = env.reset()
+    while len(agent.replay_buffer.buffer) < buffer_size:
+        if not done:
+            action = agent.select_action(state)
+            next_state, reward, done, _ = env.step(action)
+            agent.train(state, action, reward, next_state, done)
+            state = next_state
+        else:
+            done = False
+            state = env.reset()
+
     for episode in range(num_episodes):
         # Greedy evaluation
         # if episode+1 % greedy_interval == 0:
@@ -220,7 +230,7 @@ def train_params(config):
     return total_reward_per_param
 
 def main():
-    wandb.init(project="Sweep-A2C-4A-Windy-GW", mode="offline")
+    wandb.init(project="Sweep-A2C-4A-Windy-GW", mode="disabled")
     total_reward_per_param = train_params(wandb.config)
     wandb.log({'Total_Reward':total_reward_per_param})
     

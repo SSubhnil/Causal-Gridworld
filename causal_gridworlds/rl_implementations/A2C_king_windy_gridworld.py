@@ -41,7 +41,7 @@ import wandb
 
 
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-run = wandb.init(project="A2C-King-Windy-GW")#, mode="disabled")
+run = wandb.init(project="A2C-King-Windy-GW", mode="offline")
 
 grid_dimensions = (env.grid_height, env.grid_width)
 
@@ -57,8 +57,8 @@ class Actor(nn.Module):
     def forward(self, state):
         x = F.relu(self.fci(state))
         x = F.relu(self.fc1(x))
-        x = F.tanh(self.fc2(x))
-        x = F.softmax(self.fcf(x), dim=-1)
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fcf(x))
         return x
     
     # Temperature for softmax output scaling.
@@ -108,24 +108,26 @@ class ReplayBuffer:
         return states, actions, rewards, next_states, dones
 
 class A2C:
-    def __init__(self, state_dim, action_dim, hidden_dim, lr_actor, lr_critic, buffer_size, batch_size, gamma=0.98):
+    def __init__(self, state_dim, action_dim, hidden_dim, lr_actor, lr_critic, buffer_size, batch_size, entropy_weight,
+                 gamma=0.98, update_frequency = 50):
         self.actor = Actor(state_dim, action_dim, hidden_dim).to(device)
         self.critic = Critic(state_dim, hidden_dim).to(device)
         self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=lr_actor)
         self.optimizer_critic = optim.Adam(self.critic.parameters(), lr=lr_critic)
         self.gamma = gamma
         self.action_dim = action_dim
-        
+        self.entropy_weight = entropy_weight
         self.buffer_size = buffer_size
         self.replay_buffer = ReplayBuffer(buffer_size)
         self.batch_size = batch_size
+        self.update_frequency = update_frequency
+        self.steps_since_update = 0
         
     def select_action(self, state):
         state = torch.FloatTensor(state).to(device)
-        action_probs = self.actor(state)
+        logits = self.actor(state)
+        action_probs = F.softmax(logits, dim=-1) + 1e-8
         action = torch.multinomial(action_probs, 1).item()
-        # print(q_values)
-        # self.Q_table[enco.OneHotDecoder(state)] = q_values # q_value requires grad(). That's why use detach()
         return action
     
     def train(self, state, action, reward, next_state, done):
@@ -135,8 +137,6 @@ class A2C:
         
         # Check if the buffer is filled
         if len(self.replay_buffer.buffer) == self.buffer_size:
-            # for i in range(int(self.buffer_size/self.batch_size)):
-            
             # Sample a batch of experience from the replay buffer
             states, actions, rewards, next_states, dones = self.replay_buffer.sample_batch(self.batch_size)
             
@@ -145,10 +145,7 @@ class A2C:
             actions = torch.FloatTensor(actions).to(device)
             rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device) #
             dones = torch.FloatTensor(dones).unsqueeze(1).to(device) #  shape = [512]
-            # print("Shapes: States->{}, N_States->{}, Actions->{}, Rewards->{}, Dones->{}".\
-            #       format(states.shape, next_states.shape, actions.shape, rewards.shape, dones.shape))
-            
-            
+
             #Calculate advantages
             values = self.critic(states) # shape = [512, 1]
             next_values = self.critic(next_states) # shape = [512, 1]
@@ -157,28 +154,35 @@ class A2C:
             
             # Actor loss
             action_probs = self.actor(states)
-            # print("Action probs:", action_probs)
             actions = actions.view(-1, 1).long() # Convert actions into int64
-            
             log_probs = -torch.log(action_probs.gather(1, actions))
             actor_loss = log_probs * advantage.view(-1, 1)
-            # print("Actor loss shape:", actor_loss.shape)
             actor_loss = actor_loss.mean()
-            self.optimizer_actor.zero_grad()
-            actor_loss.backward()
-            self.optimizer_actor.step() 
 
             # Critic loss
             critic_loss = delta.pow(2).mean()
-            # print("critic loss:", critic_loss.shape)
+
+            # Calculate policy entropy
+            entropy = -torch.sum(action_probs * torch.log(action_probs), dim=1).mean()
+
+            # Introducing total_loss instead of just actor_loss
+            total_loss = actor_loss - self.entropy_weight * entropy
+
+            self.optimizer_actor.zero_grad()
+            actor_loss.backward()
+            self.optimizer_actor.step()
+
+            # Train network on total_loss instead of actor_loss
+            self.optimizer_actor.zero_grad()
+            total_loss.backward()
+            self.optimizer_actor.step()
             self.optimizer_critic.zero_grad()
             critic_loss.backward()
             self.optimizer_critic.step()
-    
-            # Clear the replay buffer after updating
-            self.replay_buffer.buffer.clear()
-    
-        # wandb.watch(self.actor, self.critic, criterion = critic_loss, log = "all", log_freq = 1000, idx = [0, 1], log_graph = True)
+
+            self.steps_since_update = 0
+
+        self.steps_since_update += 1
             
 # Example usage;
 if __name__ == "__main__":

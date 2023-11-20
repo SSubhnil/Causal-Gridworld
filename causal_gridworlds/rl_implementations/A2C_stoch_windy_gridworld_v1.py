@@ -26,16 +26,12 @@ os.chdir('..')
 from util.util import PlotUtil
 from util.util import RepresentationTools as rpt
 from util.static_wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
-from envs.stoch_windy_gridworld_env_v3 import StochWindyGridWorldEnv_V3
+from custom_envs.stoch_windy_gridworld_env_v3 import StochWindyGridWorldEnv_V3
 
 env = StochWindyGridWorldEnv_V3()
 np.random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("using device:", device)
-
-is_ipython = 'inline' in matplotlib.get_backend()
-if is_ipython:
-    from IPython import display
     
 import wandb
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")

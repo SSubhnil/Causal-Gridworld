@@ -66,8 +66,9 @@ class GreedyEvaluation:
             state = self.env.reset()
     
             count = 0
+            done = False
             
-            while True:
+            while not done:
                 count+=1
                 
                 # Choose action A_0 using policy derived from Q (e.g., eps-greedy)
@@ -81,11 +82,11 @@ class GreedyEvaluation:
     
                     # Update state and action
                     state = next_state  # S_t <- S_{t+1}
-                    action = next_action
     
                 if done:
                     wind_profile[i_episode - 1] = self.env.realized_wind
-                    step_count[i_episode - 1][0] = count                  
+                    step_count[i_episode - 1][0] = count
+
                     break
     
         return step_count, wind_profile
