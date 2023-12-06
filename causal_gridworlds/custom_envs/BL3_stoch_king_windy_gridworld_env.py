@@ -87,10 +87,10 @@ class StochKingWindyGridWorldEnv(gym.Env):
         trunc = False
         if self.step_counter == 300:
             trunc = True
-            return self.observation, -1, True, trunc, {}
+            return np.array(self.observation), -1, False, trunc, {}
         if self.observation == self.goal_state:
-            return self.observation, 1, True, trunc, {}
-        return self.observation, -0.5, False, trunc, {}
+            return np.array(self.observation), 1, True, trunc, {}
+        return np.array(self.observation), -0.5, False, trunc, {}
 
     def action_destination(self, state, action):
         '''set up destinations for each action in each state'''

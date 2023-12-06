@@ -113,9 +113,9 @@ class StochWindyGridWorldEnv(gym.Env):
         trunc = False
         if self.step_counter == 300:
             trunc = True
-            return self.observation, -1, True, trunc, {}
+            return np.array(self.observation), -1, False, trunc, {}
         if self.observation == self.goal_state:
-            return self.observation, 2, True, trunc, {}
+            return np.array(self.observation), 2, True, trunc, {}
         return np.array(self.observation), -0.5, False, trunc, {}
 
     "Simple render"

@@ -11,6 +11,7 @@ class KingWindyGridWorldEnv(gym.Env):
                  WIND = [0, 0, 0, 1, 1, 1, 2, 2, 1, 0], \
                  START_STATE = (3, 0), GOAL_STATE = (3, 7),\
                  REWARD = -1):
+        super(KingWindyGridWorldEnv, self).__init__()
         self.grid_height = GRID_HEIGHT
         self.grid_width = GRID_WIDTH
         self.wind = WIND
@@ -123,8 +124,3 @@ class KingWindyGridWorldEnv(gym.Env):
 
     def seed(self, seed=None):
         pass
-
-         
-
-        
-
