@@ -34,11 +34,10 @@ class StochKingWindyGridWorldEnv(gym.Env):
         self.range_random_wind = RANGE_RANDOM_WIND
         self.probablities = PROB
         self.action_space =  spaces.Discrete(8)
-        self.observation_space = spaces.Discrete(self.grid_height * self.grid_width)
-        # self.observation_space = spaces.Tuple((
-        #         spaces.Discrete(self.grid_height),
-        #          spaces.Discrete(self.grid_width)
-        # ))
+        self.observation_space = spaces.Tuple((
+                spaces.Discrete(self.grid_height),
+                 spaces.Discrete(self.grid_width)
+        ))
 
         # spaces.Box(self.grid_height, self.grid_width)
         self.actions = { 'U':0,   #up
