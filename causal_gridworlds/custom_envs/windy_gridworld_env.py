@@ -1,7 +1,7 @@
 from __future__ import print_function
 import numpy as np
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 import sys
 
 class WindyGridWorldEnv(gym.Env):
@@ -58,14 +58,21 @@ class WindyGridWorldEnv(gym.Env):
             info (dict) :
                  Contains no additional information.
         """
-        self.step_counter += 1            
+        self.step_counter += 1
         assert self.action_space.contains(action)
         self.observation = self.action_destination[self.observation][action]
-        if self.step_counter == 300:
-            return self.observation, -1, True, {}
+        reward = -0.5  # Default reward for each step
+
         if self.observation == self.goal_state:
-            return self.observation, 2, True, {}
-        return self.observation, -0.5, False, {}
+            reward = 1
+            done = True
+        elif self.step_counter == 300:
+            reward = -1
+            done = True
+        else:
+            done = False
+
+        return self.observation, reward, done, {}
         
     def reset(self):
         ''' resets the agent position back to the starting position'''
