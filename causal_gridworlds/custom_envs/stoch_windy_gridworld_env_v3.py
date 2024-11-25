@@ -68,19 +68,34 @@ class StochWindyGridWorldEnv_V3(gym.Env):
                 
     def action_destination(self, state, action):
         '''set up destinations for each action in each state'''
-        i, j= state
-        
+        i, j = state
+        if j < 0 or j >= len(self.realized_wind):
+            raise ValueError(f"Invalid column index: {j}, valid range is 0 to {len(self.realized_wind) - 1}")
+
         ##############
         destination = dict()
-        destination[self.actions['U']] = (max(i - 1 - self.realized_wind[j], 0), j)
-        destination[self.actions['D']] = (max(min(i + 1 - self.realized_wind[j], \
-                                            self.grid_height - 1), 0), j)
-        destination[self.actions['L']] = (max(i - self.realized_wind[j], 0),\
-                                               max(j - 1, 0))
-        destination[self.actions['R']] = (max(i - self.realized_wind[j], 0),\
-                                           min(j + 1, self.grid_width - 1))
+        destination[self.actions['U']] = self.clamp_to_grid(i - 1 - self.realized_wind[j], j)
+        destination[self.actions['D']] = self.clamp_to_grid(i + 1 - self.realized_wind[j], j)
+        destination[self.actions['L']] = self.clamp_to_grid(i - self.realized_wind[j], j - 1)
+        destination[self.actions['R']] = self.clamp_to_grid(i - self.realized_wind[j], j + 1)
        
         return destination[action]
+
+    def clamp_to_grid(self, *args):
+        """Clamp either indices or a state tuple to grid boundaries."""
+        if len(args) == 1 and isinstance(args[0], tuple):
+            # Handle state tuple
+            i, j = args[0]
+        elif len(args) == 2:
+            # Handle separate row and column arguments
+            i, j = args
+        else:
+            raise TypeError("Invalid arguments: Provide either a tuple or two integers.")
+
+        return (
+            max(0, min(self.grid_height - 1, i)),  # Clamp row index
+            max(0, min(self.grid_width - 1, j))  # Clamp column index
+        )
     
     def step(self, action):
         """
@@ -107,10 +122,10 @@ class StochWindyGridWorldEnv_V3(gym.Env):
         assert self.action_space.contains(action)
         self.observation = self.action_destination(self.observation, action)
         if self.step_counter == 300:
-            return self.observation, -1, True
+            return self.observation, -1, True, {}
         if self.observation == self.goal_state:
-            return self.observation, 2, True
-        return self.observation, -0.5, False
+            return self.observation, 1, True, {}
+        return self.observation, -0.5, False, {}
         
     def reset(self):
         ''' resets the agent position back to the starting position'''

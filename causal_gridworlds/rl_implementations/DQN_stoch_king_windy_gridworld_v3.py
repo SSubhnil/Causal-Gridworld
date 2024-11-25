@@ -15,10 +15,13 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 import os
+import sys
+# Change working directory to the script's directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-os.chdir('..')
 
-from envs.stoch_king_windy_gridworld_env import StochKingWindyGridWorldEnv
+# Add the parent directory to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
+from custom_envs.stoch_king_windy_gridworld_env import StochKingWindyGridWorldEnv
 
 import wandb
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
@@ -157,7 +160,7 @@ class DQNAgent:
         while len(self.replay_memory) < self.buffer_size:
             if not done:
                 action = self.choose_action(state)
-                next_state, reward, done = env.step(action)
+                next_state, reward, done, _ = env.step(action)
                 self.remember(state, action, reward, next_state, done)
                 state = next_state
             else:
@@ -196,7 +199,7 @@ class DQNAgent:
                 while not done:
                     action = self.choose_greedy_action(state)
 
-                    next_state, reward, done = env.step(action)
+                    next_state, reward, done, _ = env.step(action)
 
                     greedy_episode_reward += reward
                     state = next_state
@@ -212,7 +215,7 @@ class DQNAgent:
             while not done:
                 action = self.choose_action(state)
 
-                next_state, reward, done = env.step(action)
+                next_state, reward, done, _ = env.step(action)
 
                 self.remember(state, action, reward, next_state, done)
 
@@ -229,15 +232,15 @@ class DQNAgent:
 def train_params(config):
     state_size = 2
     action_size = env.nA
-    batch_size = config.batch_size
+    batch_size = config['batch_size']
     buffer_size = 10000
     num_episodes = 20000
-    alpha = config.alpha
+    alpha = config['alpha']
     discount_rate = 0.98
-    greedy_interval = 500
+    greedy_interval = 5
     epsilon_start = 0.9
     epsilon_decay = epsilon_start / num_episodes
-    hidden_dim = 128
+    hidden_dim = config['hidden_dim']
 
     agent = DQNAgent(state_size, action_size, hidden_dim, alpha, discount_rate, \
                      epsilon_start, epsilon_decay, buffer_size, batch_size, greedy_interval)
@@ -247,18 +250,16 @@ def train_params(config):
     return total_reward_per_param
 
 def main():
-    wandb.init(project="Sweep-DQN-Stoch-King-Windy-GW-2x128", mode = "offline")
-    total_reward_per_param = train_params(wandb.config)
+    wandb.init(project="DQN-Windy-GW", name="DQN-Stoch-King-2x256", mode="offline")
+    config = {
+        'alpha': 3e-4,  # Set the learning rate
+        'batch_size': 512,  # Set the batch size
+        'hidden_dim': 256  # Set the hidden dimension size
+    }
+    total_reward_per_param = train_params(config)
     wandb.log({'Total Reward per param': total_reward_per_param})
+    wandb.finish()
 
-sweep_configuration = {
-    "method": "bayes",
-    "metric": {"goal": "maximize", "name": "total_reward_per_param"},
-    "parameters": {
-        "alpha": {"distribution": "uniform", "max": 8e-4, "min": 1e-5},
-        "batch_size": {'distribution': 'categorical', 'values': [512, 1024]}}}
 
-sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-DQN-Stoch-King-Windy-GW-2x128")
-
-wandb.agent(sweep_id, function = main, count=8)
-wandb.finish()
+if __name__ == "__main__":
+    main()

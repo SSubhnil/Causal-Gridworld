@@ -74,7 +74,7 @@ class GreedyEvaluation:
                 # Choose action A_0 using policy derived from Q (e.g., eps-greedy)
                 action = self.epsilon_greedy(Q, state)
                 
-                next_state, reward, done = self.env.step(action)  # take action A, observe R', S'
+                next_state, reward, done, _ = self.env.step(action)  # take action A, observe R', S'
                 score += reward  # add reward to agent's score
                 if not done:
                     # Choose action A_{t+1} using policy derived fromQ (e.g., eps-greedy)

@@ -18,16 +18,16 @@ import random
 import matplotlib
 import matplotlib.pyplot as plt
 from collections import namedtuple, deque
-from itertools import count
+import itertools
 
 import os
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 os.chdir('..')
 
-from util.util import PlotUtil
-from util.util import RepresentationTools as rpt
-from util.static_wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
-from envs.stoch_windy_gridworld_env_v3 import StochWindyGridWorldEnv_V3
+from causal_gridworlds.util.util import PlotUtil
+from causal_gridworlds.util.util import RepresentationTools as rpt
+from causal_gridworlds.util.static_wind_greedy_evaluations import DQN_GreedyEvaluation as evaluate
+from causal_gridworlds.custom_envs.stoch_windy_gridworld_env_v3 import StochWindyGridWorldEnv_V3
 
 env = StochWindyGridWorldEnv_V3()
 np.random.seed(42)
@@ -35,8 +35,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("using device:", device)
 
 is_ipython = 'inline' in matplotlib.get_backend()
-if is_ipython:
-    from IPython import display
     
 import wandb
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
@@ -55,7 +53,7 @@ class Actor(nn.Module):
     def forward(self, state):
         x = F.relu(self.fci(state))
         x = F.relu(self.fc1(x))
-        x = F.tanh(self.fc2(x))
+        x = F.leaky_relu(self.fc2(x))
         x = F.softmax(self.fcf(x), dim=-1)
         return x
     
@@ -78,7 +76,7 @@ class Critic(nn.Module):
     def forward(self, state):
         x = F.relu(self.fci(state))
         x = F.relu(self.fc1(x))
-        x = F.tanh(self.fc2(x))
+        x = F.leaky_relu(self.fc2(x))
         value = self.fcf(x)
         return value
 
@@ -106,7 +104,7 @@ class ReplayBuffer:
         return states, actions, rewards, next_states, dones
 
 class A2C:
-    def __init__(self, state_dim, action_dim, hidden_dim, lr_actor, lr_critic, buffer_size, batch_size, gamma=0.98):
+    def __init__(self, state_dim, action_dim, hidden_dim, lr_actor, lr_critic, buffer_size, batch_size, wind_distribution, gamma=0.98):
         self.actor = Actor(state_dim, action_dim, hidden_dim).to(device)
         self.critic = Critic(state_dim, hidden_dim).to(device)
         self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=lr_actor)
@@ -117,6 +115,7 @@ class A2C:
         self.buffer_size = buffer_size
         self.replay_buffer = ReplayBuffer(buffer_size)
         self.batch_size = batch_size
+        self.wind_distribution_ok = wind_distribution
         
     def select_action(self, state):
         state = torch.FloatTensor(state).to(device)
@@ -142,16 +141,39 @@ class A2C:
                 actions = torch.FloatTensor(actions).to(device)
                 rewards = torch.FloatTensor(rewards).unsqueeze(1).to(device) #
                 dones = torch.FloatTensor(dones).unsqueeze(1).to(device) #  shape = [512]
-                
-                #Calculate advantages
+
+                # Calculate values for critic and advantage based on wind visibility
+                if self.wind_distribution_ok:
+                    # Incorporate wind probabilities
+                    expected_next_values = []
+                    for wind_effect, prob in zip(
+                            np.arange(-env.range_random_wind, env.range_random_wind + 1),
+                            env.probablities
+                    ):
+                        # Simulate next state for each wind effect
+                        next_state_wind = [
+                            env.clamp_to_grid((state[0] - wind_effect, state[1]))
+                            for state in next_states.cpu().numpy()
+                        ]
+                        next_state_wind = torch.FloatTensor(next_state_wind).to(device)
+
+                        # Weighted value estimate for each wind effect
+                        next_value = prob * self.critic(next_state_wind)
+                        expected_next_values.append(next_value)
+
+                    # Sum over all wind effects for the expected value
+                    next_values = torch.stack(expected_next_values).sum(dim=0)
+                else:
+                    # Standard A2C: Use only the observed next state
+                    next_values = self.critic(next_states) # shape = [512, 1]
+
+                #Calculate TD error and advantages
                 values = self.critic(states) # shape = [512, 1]
-                next_values = self.critic(next_states) # shape = [512, 1]
                 delta = rewards + (self.gamma * next_values * (1 - dones)) - values
                 advantage = delta.detach()
                 
                 # Actor loss
                 action_probs = self.actor(states)
-                
                 actions = actions.view(-1, 1).long() # Convert actions into int64
                 
                 log_probs = -torch.log(action_probs.gather(1, actions))
@@ -179,71 +201,80 @@ def train_params(config):
     state_dim = 2
     action_dim = env.nA
     hidden_dim = 64
-    num_episodes = 45000
-    learning_rate_actor = config.lr_actor
+    num_episodes = 30000
+    learning_rate_actor = config["lr_actor"]
     learning_rate_critic = 1e-3
     current_lr_actor = learning_rate_actor
-    batch_size = config.batch_size
-    buffer_size = config.buffer_size
+    batch_size = config["batch_size"]
+    buffer_size = config["buffer_size"]
+    wind_distribution_ok = config["wind_distribution_ok"]  # Use wind distribution setting
     total_reward_per_param = 0
-    
+
+
     # Create the A2C agent
-    agent = A2C(state_dim, action_dim, hidden_dim, learning_rate_actor, learning_rate_critic, buffer_size, batch_size)
-    
-    # wandb.watch(agent.actor, log='gradients', log_freq = 500, idx = 1, log_graph = True)
-    # wandb.watch(agent.critic, log='gradients', log_freq = 500, idx = 2, log_graph = True)
-    
-    # Training loop (replace this with environment and data)
+    agent = A2C(state_dim, action_dim, hidden_dim, learning_rate_actor, learning_rate_critic, buffer_size, batch_size, wind_distribution_ok)
+
+    # Training loop
     for episode in range(num_episodes):
-        # Greedy evaluation
-        # if episode+1 % greedy_interval == 0:
-        #     greedy_step_count[sampling_counter], avg_greedy_step_count[sampling_counter]\
-        #         = greedy_evaluation.run_algo(self.learning_rate, self.model)
-        #     sampling_counter += 1
-        
         state = env.reset()
-        # state = env.reset()
         done = False
-        
         episode_reward = 0
-        
+
         while not done:
+            # Select an action
             action = agent.select_action(state)
-            next_state, reward, done = env.step(action)
+            next_state, reward, done, _ = env.step(action)
+
+            # Train the agent
             agent.train(state, action, reward, next_state, done)
             episode_reward += reward
             state = next_state
-        
+
+        # Log reward for each episode
         try:
-            wandb.log({'Reward':episode_reward})
+            wandb.log({"Reward": episode_reward})
         except:
             print("WandB log failed")
-        
+
+        # Periodic logging
         if episode % 500 == 0:
-            print("Episode: {}/{}, Reward: {}".format(episode+1, num_episodes, episode_reward))
-        
-        wandb.log({'Learning rate':current_lr_actor}) 
-        
+            print(f"Episode: {episode + 1}/{num_episodes}, Reward: {episode_reward}")
+
+        wandb.log({"Learning rate": current_lr_actor})
+
         total_reward_per_param += episode_reward
+
     return total_reward_per_param
         
 def main():
-    wandb.init(project="Sweep-A2C-4A-Stoch-Windy-GW")#, mode="disabled")
-    total_reward_per_param = train_params(wandb.config)
-    wandb.log({'Total_Reward':total_reward_per_param})
-    
+    import itertools
 
-sweep_configuration = {
-    "method": "random",
-    "metric": {"goal": "maximize", "name": "total_reward_per_param"},
-    "parameters":{
-        "lr_actor": {"values": [1e-4, 7e-5, 3e-5, 1e-5, 7e-6, 3e-6, 1e-6]},
-        "buffer_size": {"values": [512, 1024]},
-        "batch_size": {"values": [256, 512]}}}
+    # Define the parameter grid
+    param_grid = {
+        "lr_actor": [1e-4, 1e-3],
+        "buffer_size": [512, 1024],
+        "batch_size": [256, 512],
+        "wind_distribution_ok": [True, False],
+    }
 
-sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-A2C-4A-Stoch-Windy-GW")
+    # Iterate through combinations of parameter values
+    for params in itertools.product(*param_grid.values()):
+        config = dict(zip(param_grid.keys(), params))  # Map current combination to parameter names
 
-wandb.agent(sweep_id, function = main, count=28)
-wandb.finish()
+        # Initialize WandB with the current config
+        wandb.init(project="A2C-Stoch-GW-Wind_seen", mode="offline", config=config)
+
+        # Log the full parameter grid (optional but useful for tracking)
+        wandb.log({"param_grid": param_grid})  # Logs the entire parameter grid once for each run
+
+        # Train and log the result
+        total_reward_per_param = train_params(config)
+        wandb.log({"Total_Reward": total_reward_per_param})
+
+        # Finish WandB logging
+        wandb.finish()
+
+if __name__ == "__main__":
+    main()
     
 

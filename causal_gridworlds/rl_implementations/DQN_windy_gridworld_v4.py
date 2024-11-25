@@ -21,7 +21,8 @@ import wandb
 
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
 # wandb.init(project="DQN-4A-Vanilla-GW-2x32", mode="disabled")
-env = WindyGridWorldEnv()
+train_env = WindyGridWorldEnv()
+test_env = WindyGridWorldEnv()
 
 np.random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -138,7 +139,7 @@ class DQNAgent:
         self.replay_memory.push(state, action, reward, next_state, done)
 
     def replay(self, percent_completion):
-        if len(self.replay_memory) >= self.batch_size:
+        if len(self.replay_memory.memory) >= self.batch_size:
             states, actions, rewards, next_states, dones = self.replay_memory.sample(self.batch_size)
             states = torch.stack(states).to(device)
             next_states = torch.stack(next_states).to(device)
@@ -159,20 +160,37 @@ class DQNAgent:
 
     def train(self, episodes):
         for episode in range(episodes):
-
+            episode_reward = 0
+            greedy_episode_reward = 0
             percent_completion = (episode + 1) / episodes
 
-            state = env.reset()
             # state = env.reset()
             done = False
 
             # Epsilon annealing - exponential decay
             if self.epsilon > self.epsilon_min:
-                # self.epsilon *= self.epsilon_decay
-                self.epsilon = math.exp(-2 * math.pow(percent_completion, 3.5) / 0.4)
+                self.epsilon -= self.epsilon_decay
+                # self.epsilon = math.exp(-2 * math.pow(percent_completion, 3.5) / 0.4)
 
-            episode_reward = 0
-            greedy_episode_reward = 0
+            state = train_env.reset()
+            while len(self.replay_memory) < self.buffer_size:
+                action = self.choose_action(state)
+                next_state, reward, done, _ = train_env.step(action)
+                self.remember(state, action, reward, next_state, done)
+                state = next_state if not done else train_env.reset()
+                done = False
+
+            # Training loop
+            while not done:
+                action = self.choose_action(state)
+                next_state, reward, done, _ = train_env.step(action)
+                self.remember(state, action, reward, next_state, done)
+                episode_reward += reward
+                state = next_state
+                self.replay(percent_completion)
+
+            wandb.log({'Reward': episode_reward, 'Epsilon': self.epsilon, \
+                       'Learning rate': self.learning_rate})
 
             "Greedy Evaluation + Target network soft-update"
             if episode % self.greedy_interval == 0:
@@ -184,37 +202,22 @@ class DQNAgent:
                     target_net_state_dict[key] = policy_net_state_dict[key] * self.tau + target_net_state_dict[key] * (
                             1 - self.tau)
                 self.target_net.load_state_dict(target_net_state_dict)
+                done = False
+                state_eval = test_env.reset()
 
                 while not done:
-                    action = self.choose_greedy_action(state)
-
-                    next_state, reward, done, _ = env.step(action)
+                    action = self.choose_greedy_action(state_eval)
+                    next_state_eval, reward, done, _ = test_env.step(action)
 
                     greedy_episode_reward += reward
-                    state = next_state
+                    state_eval = next_state_eval
 
                 wandb.log({'Evaluation reward': greedy_episode_reward})
-                print("Episode: {}/{}, Eval. Reward: {}, Epsilon: {:.2f}, Learning Rate: {}".format(episode + 1, episodes,
-                                                                                              greedy_episode_reward,
-                                                                                              self.epsilon,
-                                                                                              self.learning_rate))
-
-            if len(self.replay_memory) < self.buffer_size - 10:
-                continue
-
-            while not done:
-                action = self.choose_action(state)
-
-                next_state, reward, done, _ = env.step(action)
-
-                self.remember(state, action, reward, next_state, done)
-
-                episode_reward += reward
-                state = next_state
-                self.replay(percent_completion)
-
-            wandb.log({'Reward': episode_reward, 'Epsilon': self.epsilon, \
-                       'Learning rate': self.learning_rate})
+                print(
+                    "Episode: {}/{}, Eval. Reward: {}, Epsilon: {:.2f}, Learning Rate: {}".format(episode + 1, episodes,
+                                                                                                  greedy_episode_reward,
+                                                                                                  self.epsilon,
+                                                                                                  self.learning_rate))
 
             self.total_reward_per_param += episode_reward
 
@@ -223,13 +226,13 @@ class DQNAgent:
 def train_params(config):
 
     state_size = 2
-    action_size = env.nA
+    action_size = train_env.nA
     batch_size = config['batch_size']
     buffer_size = 10000
     num_episodes = 20000
     alpha = config['alpha']
     discount_rate = 0.98
-    greedy_interval = 500
+    greedy_interval = 5
     epsilon_start = 0.9
     epsilon_decay = epsilon_start / num_episodes
     hidden_dim = config['hidden_dim']
@@ -242,11 +245,11 @@ def train_params(config):
     return total_reward_per_param
 
 def main():
-    wandb.init(project="DQN-4A-Windy-GW-2x32", mode='offline')
+    wandb.init(project="DQN-4A-Windy-GW-2x32", mode='disabled')
     config = {
-        'alpha': 1e-4,  # Set the learning rate
+        'alpha': 3e-4,  # Set the learning rate
         'batch_size': 512,  # Set the batch size
-        'hidden_dim': 128  # Set the hidden dimension size
+        'hidden_dim': 256  # Set the hidden dimension size
     }
     total_reward_per_param = train_params(config)
     wandb.log({'Total Reward per param': total_reward_per_param})

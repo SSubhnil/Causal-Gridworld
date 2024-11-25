@@ -17,8 +17,14 @@ import torch.nn as nn
 import torch.optim as optim
 import threading
 import queue
+import os
+import sys
+# Change working directory to the script's directory
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-from causal_gridworlds.custom_envs.stoch_windy_gridworld_env_v3 import StochWindyGridWorldEnv_V3
+# Add the parent directory to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
+from custom_envs.stoch_windy_gridworld_env_v3 import StochWindyGridWorldEnv_V3
 import gym
 import wandb
 
@@ -230,7 +236,7 @@ def train_params(config):
     num_episodes = 20000
     alpha = config['alpha']
     discount_rate = 0.98
-    greedy_interval = 500
+    greedy_interval = 100
     epsilon_start = 0.9
     epsilon_decay = epsilon_start / num_episodes
     hidden_dim = config['hidden_dim']
@@ -243,11 +249,11 @@ def train_params(config):
     return total_reward_per_param
 
 def main():
-    wandb.init(project="Sweep-DQN-Stoch-Windy-GW-2x64", mode = "offline")
+    wandb.init(project="DQN-Windy-GW", name="DQN-Stoch-4A-2x256", mode="offline")
     config = {
-        'alpha': 1e-4,  # Set the learning rate
+        'alpha': 3e-4,  # Set the learning rate
         'batch_size': 512,  # Set the batch size
-        'hidden_dim': 128  # Set the hidden dimension size
+        'hidden_dim': 256  # Set the hidden dimension size
     }
     total_reward_per_param = train_params(config)
     wandb.log({'Total Reward per param': total_reward_per_param})

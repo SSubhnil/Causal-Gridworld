@@ -14,17 +14,17 @@ import sys
 import matplotlib.pyplot as plt
 import random
 import math
-from util.wind_greedy_evaluations import GreedyEvaluation as evaluate
+from causal_gridworlds.util.wind_greedy_evaluations import GreedyEvaluation as evaluate
 import wandb
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
-wandb.init(project="Q-learn-Stoch-King-Windy-GW", mode="offline")
+
 
 import os
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 os.chdir('..')
 
-from custom_envs.stoch_king_windy_gridworld_env import StochKingWindyGridWorldEnv
+from causal_gridworlds.custom_envs.stoch_king_windy_gridworld_env import StochKingWindyGridWorldEnv
 
 env = StochKingWindyGridWorldEnv()
 grid_dimensions = (env.grid_height, env.grid_width)
@@ -40,21 +40,42 @@ def epsilon_greedy(Q, state, nA, eps):
     else:
         return random.choice(np.arange(nA))
 
-
-def update_Q_table(alpha, gamma, Q, state, action, reward, next_state=None):
+# Wind distribution is optional - choose expected_Qsa_next
+def update_Q_table(alpha, gamma, Q, state, action, reward, wind_distribution_ok, next_state=None):
     # Estimate in Q-table (for current state, action pair) Q(S_t, A_t)
     current = Q[state[0]][state[1]][action]
     # Get value of state, action pair at next time step Q(S_{t+1}, A_{t+1})
-    Qsa_next = np.max(Q[next_state[0]][next_state[1]]) if next_state is not None else 0
+    if wind_distribution_ok:
+        # For making the wind distribution available
+        Qsa_next = 0
+        realized_state = env.action_destination(state, action)
+
+        # Check if the column is windy
+        wind_strength = env.wind[realized_state[1]] # Get wind strength for the column
+        if wind_strength > 0:
+            for wind_effect, prob in zip(np.arange(-env.range_random_wind, env.range_random_wind + 1), env.probablities):
+                # Simulate the next state given the wind effect
+                realized_state = env.action_destination(state, action)
+                # Apply wind effect and clamp to grid dimensions
+                next_state = env.clamp_to_grid((realized_state[0] - wind_effect, realized_state[1]))
+                Qsa_next += prob * np.max(Q[next_state[0]][next_state[1]])
+
+        else:
+            # No wind in this column, directly use the realized state
+            next_state = realized_state
+            Qsa_next = np.max(Q[next_state[0]][next_state[1]])
+
+    else:
+        Qsa_next = np.max(Q[next_state[0]][next_state[1]]) if next_state is not None else 0
+
     # Construct TD target R_{t+1} + gamma * Q(S_{t+1}, A_{t+1})
     target = reward + (gamma * Qsa_next)
     # Get updated value Q(S_t, A_t) + alpha * (R_{t+1} + gamma * Q(S_{t+1}, A_{t+1}) - Q(S_t, A_t)
     new_value = current + alpha * (target - current)
-
     return new_value
 
 
-def Q_learn(env, num_episodes, alpha, epsilon, greedy_interval, gamma=1.0):
+def Q_learn(env, num_episodes, alpha, epsilon, greedy_interval, wind_distribution_ok, gamma=1.0):
     nA = env.nA
     Q = np.random.rand(env.grid_height, env.grid_width, nA)
     Q[env.goal_state] = np.zeros(8)
@@ -63,6 +84,8 @@ def Q_learn(env, num_episodes, alpha, epsilon, greedy_interval, gamma=1.0):
     greedy_evaluation = evaluate(env, grid_dimensions)
 
     eps = epsilon
+    eps_start = epsilon
+    eps_end = 0.01
     total_reward_per_param = 0
 
     # Loop over episodes
@@ -93,51 +116,62 @@ def Q_learn(env, num_episodes, alpha, epsilon, greedy_interval, gamma=1.0):
 
             # Choose action A_0 using policy derived from Q (e.g., eps-greedy)
             action = epsilon_greedy(Q, state, nA, eps)
-            next_state, reward, done = env.step(action)  # take action A, observe R', S'
+            next_state, reward, done, _ = env.step(action)  # take action A, observe R', S'
             score += reward  # add reward to agent's score
             if not done:
                 # Update Q
                 Q[state[0]][state[1]][action] = update_Q_table(alpha, gamma, Q, state, action, reward,
-                                                               next_state)
+                                                               wind_distribution_ok, next_state)
 
                 # Update state and action
                 state = next_state  # S_t <- S_{t+1}
 
             if done:
-                Q[state[0]][state[1]][action] = update_Q_table(alpha, gamma, Q, state, action, reward)
+                Q[state[0]][state[1]][action] = update_Q_table(alpha, gamma, Q, state, action, reward, wind_distribution_ok)
                 break
         wandb.log({'Reward': score, 'Epsilon': eps})
         # Exponential Decay
         eps = math.exp(-2 * math.pow(percent_completion, 3.5) / 0.4)
+
+        # Linear Decay
+        #eps = eps_start - (percent_completion * (eps_start - eps_end))  # Linear decay
+        #eps = max(eps, eps_end)  # Ensure epsilon doesn't go below eps_end
+
         total_reward_per_param += score
 
     return total_reward_per_param
 
-def train_params(config):
-    alpha = config.alpha
+def train_params(alpha, wind_distribution_ok):
     num_episodes = 30000
     greedy_interval = 1000
-
     starting_eps = 1.0
 
-    total_reward_per_param = Q_learn(env, num_episodes, alpha, starting_eps, greedy_interval)
-
+    # Pass alpha and wind_distribution_ok to Q_learn
+    total_reward_per_param = Q_learn(env, num_episodes, alpha, starting_eps, greedy_interval, wind_distribution_ok)
     return total_reward_per_param
 
 
 def main():
-    wandb.init(project="Sweep-Q-learn-Stoch-King-Windy-GW", mode="offline")
-    total_reward_per_param = train_params(wandb.config)
-    wandb.log({'Total Reward per param': total_reward_per_param})
+    # Initialize WandB for logging
+    wandb.init(project="Q-learn-Wind_dist_known", mode="offline")  # Switch "mode" to "online" or "offline" as needed
 
-sweep_configuration = {
-    "method": "grid",
-    "metric": {"goal": "maximize", "name": "total_reward_per_param"},
-    "parameters": {
-        "alpha": {"values": [0.1, 0.01, 0.25, 0.5, 0.4]}}}
+    # Manually set parameters
+    alpha = 0.4  # Example alpha value
+    wind_distribution_ok = True  # Example setting for wind distribution visibility
 
-sweep_id = wandb.sweep(sweep=sweep_configuration, project="Sweep-Q-learn-Stoch-King-Windy-GW")
+    # Train the agent and log results
+    total_reward_per_param = train_params(alpha, wind_distribution_ok)
+    wandb.log({
+        'Alpha': alpha,
+        'Wind Distribution Known': wind_distribution_ok,
+        'Total Reward per param': total_reward_per_param
+    })
 
-wandb.agent(sweep_id, function = main, count=5)
-wandb.finish()
+    # Finish WandB logging
+    wandb.finish()
+
+
+if __name__ == "__main__":
+    main()
+
 

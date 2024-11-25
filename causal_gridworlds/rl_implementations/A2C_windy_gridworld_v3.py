@@ -18,8 +18,12 @@ import random
 from collections import namedtuple, deque
 
 import os
+import sys
+# Change working directory to the script's directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-os.chdir('..')
+
+# Add the parent directory to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
 
 from causal_gridworlds.custom_envs.windy_gridworld_env import WindyGridWorldEnv
 
@@ -233,7 +237,7 @@ def train_params():
     return total_reward_per_param
 
 def main():
-    wandb.init(project="A2C-4A-Windy-GW", mode="offline")
+    wandb.init(project="A2C-4A-Windy-GW", mode="disabled")
     total_reward_per_param = train_params()
     wandb.log({'Total_Reward': total_reward_per_param})
     wandb.finish()
