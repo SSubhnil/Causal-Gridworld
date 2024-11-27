@@ -117,6 +117,31 @@ class PPO:
         dones = [exp.done for exp in self.replay_buffer]
         values = torch.FloatTensor([exp.value for exp in self.replay_buffer]).view(-1, 1).to(device)
 
+        # **Compute expected next state values considering wind distribution**
+        expected_next_values = []
+        for i in range(len(self.replay_buffer)):
+            if self.wind_distribution_ok:
+                expected_value = 0
+                next_state = self.replay_buffer[i].next_state
+                # Iterate over possible wind effects
+                for wind_effect, prob in zip(
+                        np.arange(-self.env.range_random_wind, self.env.range_random_wind + 1),
+                        self.env.probablities
+                ):
+                    # Adjust next_state by wind effect
+                    adjusted_state = self.env.clamp_to_grid(
+                        (next_state[0] - wind_effect, next_state[1])
+                    )
+                    adjusted_state_tensor = torch.FloatTensor(adjusted_state).unsqueeze(0).to(device)
+                    value = self.critic(adjusted_state_tensor)
+                    expected_value += prob * value.item()
+                expected_next_values.append(expected_value)
+            else:
+                if i + 1 < len(values):
+                    expected_next_values.append(values[i + 1].item())
+                else:
+                    expected_next_values.append(0)
+
         # Compute returns and advantages
         returns = []
         advantages = []
@@ -127,7 +152,7 @@ class PPO:
                 G = 0
                 gae = 0
             G = rewards[i] + self.gamma * G
-            delta = rewards[i] + self.gamma * (values[i+1] if i+1 < len(values) else 0) - values[i]
+            delta = rewards[i] + self.gamma * expected_next_values[i] - values[i].item()
             gae = delta + self.gamma * self.lamda * gae
             returns.insert(0, G)
             advantages.insert(0, gae)
@@ -188,7 +213,7 @@ def train_params(config):
     batch_size = config["batch_size"]
     buffer_size = config["buffer_size"]
     learning_rate_actor = config["lr_actor"]
-    learning_rate_critic = 1e-4
+    learning_rate_critic = 1e-3
     wind_distribution_ok = config["wind_distribution_ok"]
     total_reward_per_param = 0
     entropy_weight = config["entropy_weight"]
@@ -196,7 +221,7 @@ def train_params(config):
     # PPO-specific hyperparameters
     clip_epsilon = config.get("clip_epsilon", 0.2)
     lamda = config.get("lamda", 0.95)
-    K_epochs = config.get("K_epochs", 4)
+    K_epochs = config.get("K_epochs", 10)
 
     # Create the PPO agent
     agent = PPO(env, state_dim, action_dim, hidden_dim, learning_rate_actor,
@@ -267,9 +292,9 @@ if __name__ == "__main__":
         "parameters": {
             "lr_actor": {"values": [3e-4]},
             "buffer_size": {"values": [1024, 512]},
-            "batch_size": {"values": [512, 256]},
+            "batch_size": {"values": [64, 128, 256]},
             "wind_distribution_ok": {"values": [False, True]},
-            "entropy_weight": {"values": [0.2, 0.1]},
+            "entropy_weight": {"values": [0.01]},
             "clip_epsilon": {"values": [0.2]},
             "lamda": {"values": [0.95]},
             "K_epochs": {"values": [4]}
