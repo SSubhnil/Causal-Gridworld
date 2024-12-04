@@ -4,9 +4,10 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
+import argparse
 import time
 import wandb
-wandb.login(key="YOUR_WANDB_API_KEY")
+wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
 import math
 import random
 import matplotlib
@@ -55,7 +56,7 @@ class Critic(nn.Module):
         super(Critic, self).__init__()
         self.fci = nn.Linear(input_dim, hidden_dim)
         self.fc1 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc1 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.state_value = nn.Linear(hidden_dim, 1)
 
     def forward(self, state):
@@ -200,6 +201,7 @@ class PPO:
         # Clear buffer
         self.replay_buffer = []
 
+
 def train_params(config):
     # Define environment dimensions and action space
     env = StochWindyGridWorldEnv_V3()
@@ -265,44 +267,49 @@ def train_params(config):
 
     return total_reward_per_param
 
-def main():
-    # Initialize WandB with the current sweep configuration
-    wandb.init(project="PPO-Stoch-GW-Wind_seen")
+def main(single_run=False):
+    if single_run:
+        # Perform a single run
+        wandb.init(project="PPO-Stoch-GW-Wind_seen", config={
+            "lr_actor": 3e-4,
+            "buffer_size": 1024,
+            "batch_size": 64,
+            "wind_distribution_ok": False,
+            "entropy_weight": 0.01,
+            "clip_epsilon": 0.2,
+            "lamda": 0.95,
+            "K_epochs": 10,
+        }, mode = "disabled")
 
-    # Access the configuration for the current run from WandB
-    config = wandb.config
+        config = wandb.config
+        total_reward_per_param = train_params(config)
+        wandb.log({"Total_Reward": total_reward_per_param})
+        wandb.finish()
+    else:
+        # Perform a sweep
+        sweep_configuration = {
+            "method": "grid",  # Exhaustive search over all parameter combinations
+            "metric": {"goal": "maximize", "name": "Total_Reward"},  # Optimize for total reward
+            "parameters": {
+                "lr_actor": {"values": [3e-4]},
+                "buffer_size": {"values": [1024, 512]},
+                "batch_size": {"values": [64, 128, 256]},
+                "wind_distribution_ok": {"values": [False, True]},
+                "entropy_weight": {"values": [0.01]},
+                "clip_epsilon": {"values": [0.2]},
+                "lamda": {"values": [0.95]},
+                "K_epochs": {"values": [4]}
+            },
+        }
 
-    # Call your existing train_params() function with the current config
-    total_reward_per_param = train_params(config)
-
-    # Log the final result
-    wandb.log({"Total_Reward": total_reward_per_param})
-
-    # Finish the WandB run
-    wandb.finish()
-
-def run_agent(sweep_id):
-    wandb.agent(sweep_id, function=main, count=1)
+        # Initialize the sweep
+        sweep_id = wandb.sweep(sweep=sweep_configuration, project="PPO-Stoch-GW-Wind_seen")
+        wandb.agent(sweep_id, function=main)
 
 if __name__ == "__main__":
-    # Define the sweep configuration
-    sweep_configuration = {
-        "method": "grid",  # Exhaustive search over all parameter combinations
-        "metric": {"goal": "maximize", "name": "Total_Reward"},  # Optimize for total reward
-        "parameters": {
-            "lr_actor": {"values": [3e-4]},
-            "buffer_size": {"values": [1024, 512]},
-            "batch_size": {"values": [64, 128, 256]},
-            "wind_distribution_ok": {"values": [False, True]},
-            "entropy_weight": {"values": [0.01]},
-            "clip_epsilon": {"values": [0.2]},
-            "lamda": {"values": [0.95]},
-            "K_epochs": {"values": [4]}
-        },
-    }
+    parser = argparse.ArgumentParser(description="Run PPO training.")
+    parser.add_argument("--single_run", action="store_true",
+                        help="Run a single training instead of a sweep.")
+    args = parser.parse_args()
 
-    # Initialize the sweep
-    sweep_id = wandb.sweep(sweep=sweep_configuration, project="PPO-Stoch-GW-Wind_seen")
-
-    # Run the sweep
-    wandb.agent(sweep_id, function=main)
+    main(single_run=args.single_run)

@@ -19,6 +19,9 @@ from collections import namedtuple, deque
 
 import os
 import sys
+
+from causal_gridworlds.rl_implementations.DQN_king_windy_gridworld_v1 import greedy_interval
+
 # Change working directory to the script's directory
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -181,6 +184,7 @@ def train_params():
     batch_size = 512
     buffer_size = 10000
     entropy_weight = 0.1 # Low:[<0.001]; Moderate:[0.01, 0.1]; High:[>1.0]
+    greedy_interval = 1000
     total_reward_per_param = 0
            
     # Create the A2C agent
@@ -213,7 +217,11 @@ def train_params():
         #     greedy_step_count[sampling_counter], avg_greedy_step_count[sampling_counter]\
         #         = greedy_evaluation.run_algo(self.learning_rate, self.model)
         #     sampling_counter += 1
-        
+        # Runs greedy evaluation
+        if episode % greedy_interval == 0:
+            _, avg_evaluation_reward, _ = greedy_evaluation.run_algo(Q)
+            wandb.log({"Avg. Evaluation Reward": avg_evaluation_reward})
+
         state = env.reset()
         done = False
         

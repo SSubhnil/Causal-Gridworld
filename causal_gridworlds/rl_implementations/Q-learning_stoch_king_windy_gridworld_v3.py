@@ -141,7 +141,8 @@ def Q_learn(env, num_episodes, alpha, epsilon, greedy_interval, wind_distributio
 
     return total_reward_per_param
 
-def train_params(alpha, wind_distribution_ok):
+def train_params(alpha, wind_distribution_ok, seed):
+    np.random.seed(seed)
     num_episodes = 30000
     greedy_interval = 1000
     starting_eps = 1.0
@@ -153,11 +154,11 @@ def train_params(alpha, wind_distribution_ok):
 
 def main():
     # Initialize WandB for logging
-    wandb.init(project="Q-learn-Wind_dist_known", mode="offline")  # Switch "mode" to "online" or "offline" as needed
+    wandb.init(project="Q-learn-Wind_dist_known", mode="online")  # Switch "mode" to "online" or "offline" as needed
 
     # Manually set parameters
     alpha = 0.4  # Example alpha value
-    wind_distribution_ok = True  # Example setting for wind distribution visibility
+    wind_distribution_ok = False  # Example setting for wind distribution visibility
 
     # Train the agent and log results
     total_reward_per_param = train_params(alpha, wind_distribution_ok)

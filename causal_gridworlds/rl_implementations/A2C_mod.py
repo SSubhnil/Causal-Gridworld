@@ -14,6 +14,7 @@ import torch.nn.functional as F
 import numpy as np
 import argparse
 import wandb
+
 wandb.login(key="576d985d69bfd39f567224809a6a3dd329326993")
 
 import random
@@ -23,18 +24,20 @@ from collections import namedtuple, deque
 
 import os
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # from causal_gridworlds.util.util import PlotUtil
 # from causal_gridworlds.util.util import RepresentationTools as rpt
 from util.wind_greedy_evaluations import A2C_GreedyEvaluation as evaluate
 from custom_envs.stoch_windy_gridworld_env_v3 import StochWindyGridWorldEnv_V3
 from custom_envs.stoch_king_windy_gridworld_env import StochKingWindyGridWorldEnv
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("using device:", device)
 
 is_ipython = 'inline' in matplotlib.get_backend()
+
 
 # Define the actor network
 class Actor(nn.Module):
@@ -44,21 +47,22 @@ class Actor(nn.Module):
         self.fc1 = nn.Linear(hidden_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fcf = nn.Linear(hidden_dim, action_dim)
-        
+
     def forward(self, state):
         x = self.fci(state)
         x = F.relu(self.fc1(x))
         x = F.leaky_relu(self.fc2(x))
         x = F.softmax(self.fcf(x), dim=-1)
         return x
-    
+
     # Temperature for softmax output scaling.
     # Closer to 10.0 makes the logits uniform
     # Closer to 0.0 makes logits biased to one value
-    def temperature_scaled_softmax(self, logits, temperature = 5.0):
+    def temperature_scaled_softmax(self, logits, temperature=5.0):
         logits = logits / temperature
         return torch.softmax(logits, dim=0)
-    
+
+
 # Define the Critic network
 class Critic(nn.Module):
     def __init__(self, state_dim, hidden_dim):
@@ -67,7 +71,7 @@ class Critic(nn.Module):
         self.fc1 = nn.Linear(hidden_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
         self.fcf = nn.Linear(hidden_dim, 1)
-        
+
     def forward(self, state):
         x = self.fci(state)
         x = F.relu(self.fc1(x))
@@ -75,15 +79,17 @@ class Critic(nn.Module):
         value = self.fcf(x)
         return value
 
+
 # Define a named tuple for experiences
 Experience = namedtuple("Experience", ["state", "action", "reward", "next_state", "done"])
+
 
 class ReplayBuffer:
     def __init__(self, buffer_size):
         self.buffer = list()
         self.buffer_size = buffer_size
         self.position = 0
-    
+
     def add_experience(self, experience):
         if len(self.buffer) < self.buffer_size:
             self.buffer.append(experience)
@@ -91,12 +97,12 @@ class ReplayBuffer:
             self.buffer[self.position] = experience
         self.position = (self.position + 1) % self.buffer_size
 
-    
     def sample_batch(self, batch_size):
-     
+
         batch = random.sample(self.buffer, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
         return states, actions, rewards, next_states, dones
+
 
 class A2C:
     def __init__(self, env, state_dim, action_dim, hidden_dim,
@@ -110,7 +116,6 @@ class A2C:
         self.gamma = gamma
         self.action_dim = action_dim
 
-        
         self.buffer_size = buffer_size
         self.replay_buffer = ReplayBuffer(buffer_size)
         self.batch_size = batch_size
@@ -130,6 +135,7 @@ class A2C:
         return action
 
     "This type of action selection is not valid. Use standard."
+
     def select_action_wd(self, state):
         state = torch.FloatTensor(state).to(device)
         if self.wind_distribution_ok:
@@ -181,23 +187,88 @@ class A2C:
 
                 # Compute critic next values
                 if self.wind_distribution_ok:
-                    next_values = torch.zeros(next_states.shape[0]).to(device)
+                    batch_size = states.shape[0]
 
-                    for wind_effect, prob in zip(
-                            np.arange(-self.env.range_random_wind, self.env.range_random_wind + 1),
-                            self.env.probabilities
-                    ):
-                        print("wind_effect:", wind_effect)
-                        print("Probability:", prob)
-                        # Adjust the row (vertical index) of next_states for the wind effect
-                        adjusted_next_states = next_states.clone()
-                        adjusted_next_states[:, 0] = torch.clamp(
-                            adjusted_next_states[:, 0] - wind_effect, 0, self.env.grid_height - 1
-                        )
-                        print("next_states:", next_states.shape)
-                        print("adjusted_state:", adjusted_next_states.shape)
-                        # Accumulate weighted value estimates for the critic
-                        next_values += prob * self.critic(adjusted_next_states).squeeze(-1)
+                    # Initialize next values tensor
+                    next_values = torch.zeros(batch_size).to(device)
+
+                    # Convert states and actions to NumPy for environment function compatibility
+                    states_np = states.cpu().numpy().astype(int)  # Shape: (batch_size, 2)
+                    actions_np = actions.squeeze(-1).cpu().numpy().astype(int)  # Shape: (batch_size,)
+
+                    # Compute realized states by applying actions
+                    realized_states = np.array([
+                        self.env.action_destination(tuple(state), action)
+                        for state, action in zip(states_np, actions_np)
+                    ])  # Shape: (batch_size, 2)
+
+                    # Get wind strengths at realized states' columns
+                    realized_cols = realized_states[:, 1]
+                    wind_strengths = self.env.wind[realized_cols]  # Shape: (batch_size,)
+
+                    # Create masks for samples with and without wind
+                    wind_mask = wind_strengths > 0  # Shape: (batch_size,)
+
+                    # Process samples without wind
+                    if np.any(~wind_mask):
+                        no_wind_indices = np.where(~wind_mask)[0]
+                        no_wind_states = realized_states[no_wind_indices]
+                        no_wind_states_tensor = torch.FloatTensor(no_wind_states).to(device)
+                        next_values_no_wind = self.critic(no_wind_states_tensor).squeeze(-1)
+                        next_values[no_wind_indices] = next_values_no_wind
+
+                    # Process samples with wind
+                    if np.any(wind_mask):
+                        wind_indices = np.where(wind_mask)[0]
+                        wind_realized_states = realized_states[wind_indices]
+
+                        # Initialize next values for wind samples
+                        next_values_wind = torch.zeros(len(wind_indices)).to(device)
+
+                        # Prepare wind effects and probabilities
+                        wind_effects = np.arange(-self.env.range_random_wind, self.env.range_random_wind + 1)
+                        probs = np.array(self.env.probabilities)
+
+                        # Expand wind effects and probabilities for broadcasting
+                        wind_effects_expanded = wind_effects.reshape(1, -1)  # Shape: (1, num_wind_effects)
+                        probs_expanded = probs.reshape(1, -1)  # Shape: (1, num_wind_effects)
+
+                        # Repeat wind_realized_states for each wind effect
+                        wind_realized_states_expanded = np.repeat(
+                            wind_realized_states[:, np.newaxis, :], len(wind_effects), axis=1
+                        )  # Shape: (num_wind_samples, num_wind_effects, 2)
+
+                        # Adjust the row indices based on wind effects
+                        adjusted_rows = wind_realized_states_expanded[:, :,
+                                        0] - wind_effects_expanded  # Subtract wind effects
+                        adjusted_rows = np.clip(adjusted_rows, 0, self.env.grid_height - 1)  # Clamp to grid
+
+                        # Columns remain the same
+                        adjusted_cols = wind_realized_states_expanded[:, :, 1]
+
+                        # Combine adjusted rows and columns
+                        adjusted_next_states = np.stack((adjusted_rows, adjusted_cols),
+                                                        axis=2)  # Shape: (num_wind_samples, num_wind_effects, 2)
+
+                        # Reshape for critic evaluation
+                        adjusted_next_states_flat = adjusted_next_states.reshape(-1,
+                                                                                 2)  # Shape: (num_wind_samples * num_wind_effects, 2)
+
+                        # Convert to tensor
+                        adjusted_next_states_tensor = torch.FloatTensor(adjusted_next_states_flat).to(device)
+
+                        # Evaluate critic on all adjusted next states
+                        V_s_primes = self.critic(adjusted_next_states_tensor).squeeze(
+                            -1)  # Shape: (num_wind_samples * num_wind_effects,)
+
+                        # Reshape back to (num_wind_samples, num_wind_effects)
+                        V_s_primes = V_s_primes.view(len(wind_indices), len(wind_effects))
+
+                        # Compute expected next values
+                        expected_V_s_primes = (V_s_primes * torch.FloatTensor(probs_expanded).to(device)).sum(dim=1)
+
+                        # Update next_values for wind samples
+                        next_values[wind_indices] = expected_V_s_primes
                 else:
                     next_values = self.critic(next_states).squeeze(-1)
 
@@ -209,26 +280,6 @@ class A2C:
                 # Normalize advantage for numerical stability
                 advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
-                # Compute actor loss using wind-adjusted probabilities
-                # Compute actor action probabilities
-                # if self.wind_distribution_ok and episode >= 500:
-                #     wind_effects = torch.arange(-self.env.range_random_wind, self.env.range_random_wind + 1).to(device)
-                #     probs = torch.FloatTensor(self.env.probabilities).to(device)
-                #
-                #     # Compute adjusted states
-                #     adjusted_states = states.unsqueeze(1).repeat(1, len(wind_effects),
-                #                                                  1)  # (batch_size, num_wind_effects, 2)
-                #     adjusted_states[:, :, 0] = torch.clamp(
-                #         adjusted_states[:, :, 0] - wind_effects.view(1, -1), 0, self.env.grid_height - 1
-                #     )
-                #
-                #     # Compute action probabilities for all adjusted states
-                #     all_action_probs = self.actor(adjusted_states.view(-1, 2)).view(states.shape[0], len(wind_effects),
-                #                                                                     self.env.action_space.n)
-                #
-                #     # Marginalize over wind effects
-                #     action_probs = torch.einsum('k,bka->ba', probs, all_action_probs)
-                # else:
                 action_probs = self.actor(states) + 1e-8
 
                 # Compute log probabilities of the taken actions
@@ -278,7 +329,6 @@ def train_params(config):
     total_reward_per_param = 0
     entropy_weight = config["entropy_weight"]
 
-
     # Create the A2C agent
     agent = A2C(env, state_dim, action_dim, hidden_dim, learning_rate_actor,
                 learning_rate_critic, buffer_size, batch_size, entropy_weight,
@@ -317,7 +367,8 @@ def train_params(config):
         total_reward_per_param += episode_reward
 
     return total_reward_per_param
-        
+
+
 def main(single_run=False):
     seeds = [42, 123, 456, 789, 101112]
     if single_run:
@@ -384,6 +435,7 @@ def main(single_run=False):
         # Initialize the sweep
         sweep_id = wandb.sweep(sweep=sweep_configuration, project="A2C-Stoch-GW-Wind_seen")
         wandb.agent(sweep_id, function=sweep_main)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run A2C training.")

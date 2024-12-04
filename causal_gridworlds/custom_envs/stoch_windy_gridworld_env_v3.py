@@ -9,9 +9,9 @@ Created on Mon Oct  9 11:36:08 2023
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 import numpy as np
-import gym
-from gym import spaces
-from gym.utils import seeding
+import gymnasium as gym
+from gymnasium import spaces
+from gymnasium.utils import seeding
 import sys
 
 
@@ -37,7 +37,7 @@ class StochWindyGridWorldEnv_V3(gym.Env):
         self.goal_state = GOAL_STATE
         self.reward = REWARD
         self.range_random_wind = RANGE_RANDOM_WIND
-        self.probablities = PROB
+        self.probabilities = PROB
         self.action_space =  spaces.Discrete(4)
         self.observation_space = spaces.Tuple((
                 spaces.Discrete(self.grid_height),
@@ -57,10 +57,10 @@ class StochWindyGridWorldEnv_V3(gym.Env):
         ##############
         # case 1 where all wind tiles are affected by the same noise scalar, 
         # noise1 is a scalar value added to wind
-        noise1 = self.np_random.choice(rang, 1, self.probablities)[0] 
+        noise1 = self.np_random.choice(rang, 1, self.probabilities)[0]
         # case 2  where each wind tile is affected by a different noise 
         # noise2 is a vector added to wind
-        noise2 = self.np_random.choice(rang, self.num_wind_tiles, self.probablities)
+        noise2 = self.np_random.choice(rang, self.num_wind_tiles, self.probabilities)
         noise = noise1 if self.noise_case==1 else noise2
         wind = np.copy(self.wind)
         wind[np.where( wind > 0 )] += noise
